@@ -28,12 +28,14 @@ requests_table = dynamodb.Table(environ['MONTAGE_REQUESTS_TABLE'])
 # Load configuration
 def load_config():
     """Load configuration from config.json file."""
+    print("Loading configuration from config.json")
     with open('config.json', 'r') as f:
         return json.load(f)
 
 # Get random videos from S3 bucket
 def get_random_videos(bucket_name, prefix, num_videos=None):
     """Get a list of random videos from the specified S3 bucket and prefix."""
+    print(f"Getting random videos from bucket: {bucket_name}, prefix: {prefix}")
     response = s3_client.list_objects_v2(
         Bucket=bucket_name,
         Prefix=prefix
@@ -49,12 +51,16 @@ def get_random_videos(bucket_name, prefix, num_videos=None):
         raise ValueError(f"No video files found in bucket '{bucket_name}' with prefix '{prefix}'")
     
     if num_videos and num_videos < len(video_files):
-        return random.sample(video_files, num_videos)
+        selected_videos = random.sample(video_files, num_videos)
+        print(f"Selected {len(selected_videos)} random videos from {len(video_files)} available videos")
+        return selected_videos
+    print(f"Using all {len(video_files)} available videos")
     return video_files
 
 # Get random music file from S3 bucket
 def get_random_music(bucket_name, prefix):
     """Get a random music file from the specified S3 bucket and prefix."""
+    print(f"Getting random music from bucket: {bucket_name}, prefix: {prefix}")
     response = s3_client.list_objects_v2(
         Bucket=bucket_name,
         Prefix=prefix
@@ -69,23 +75,28 @@ def get_random_music(bucket_name, prefix):
     if not music_files:
         raise ValueError(f"No music files found in bucket '{bucket_name}' with prefix '{prefix}'")
     
-    return random.choice(music_files)
+    selected_music = random.choice(music_files)
+    print(f"Selected music file: {selected_music}")
+    return selected_music
 
 # Download file from S3
 def download_from_s3(bucket_name, key, local_path):
     """Download a file from S3 to a local path."""
+    print(f"Downloading from S3: {bucket_name}/{key} to {local_path}")
     s3_client.download_file(bucket_name, key, local_path)
     return local_path
 
 # Upload file to S3
 def upload_to_s3(local_path, bucket_name, key):
     """Upload a file to S3."""
+    print(f"Uploading to S3: {local_path} to {bucket_name}/{key}")
     s3_client.upload_file(local_path, bucket_name, key)
     return f"s3://{bucket_name}/{key}"
 
 # Get video information using ffprobe
 def get_video_info(video_path):
     """Get video information using ffprobe."""
+    print(f"Getting video info for: {video_path}")
     cmd = [
         'ffprobe', 
         '-v', 'error', 
@@ -115,18 +126,22 @@ def get_video_info(video_path):
         duration_info = json.loads(duration_result.stdout)
         duration = float(duration_info['format']['duration']) if 'format' in duration_info else 0
         
-        return {
+        video_info = {
             'width': width,
             'height': height,
             'duration': duration,
             'is_portrait': height > width
         }
+        print(f"Video info: {video_info}")
+        return video_info
     
+    print(f"Failed to get video info for: {video_path}")
     return None
 
 # Extract a random clip from a video
 def extract_random_clip(video_path, output_path, config):
     """Extract a random clip from the video based on configuration."""
+    print(f"Extracting random clip from: {video_path} to {output_path}")
     clip_config = config['video']['clip_selection']
     
     # Get video info
@@ -146,6 +161,8 @@ def extract_random_clip(video_path, output_path, config):
     else:
         start_time = 0
     
+    print(f"Clip parameters: start_time={start_time}, duration={duration}")
+    
     # Extract the clip using ffmpeg
     cmd = [
         'ffmpeg',
@@ -160,17 +177,20 @@ def extract_random_clip(video_path, output_path, config):
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     
     # Return clip info
-    return {
+    clip_info = {
         'path': output_path,
         'width': video_info['width'],
         'height': video_info['height'],
         'duration': duration,
         'is_portrait': video_info['is_portrait']
     }
+    print(f"Extracted clip info: {clip_info}")
+    return clip_info
 
 # Resize video to match target resolution
 def resize_video(input_path, output_path, target_resolution):
     """Resize the video to match the target resolution while maintaining aspect ratio."""
+    print(f"Resizing video: {input_path} to resolution {target_resolution}")
     target_width, target_height = target_resolution
     
     # Get video info
@@ -194,6 +214,8 @@ def resize_video(input_path, output_path, target_resolution):
     x_offset = (target_width - new_width) // 2
     y_offset = (target_height - new_height) // 2
     
+    print(f"Resize parameters: new_width={new_width}, new_height={new_height}, x_offset={x_offset}, y_offset={y_offset}")
+    
     # Resize and pad the video using ffmpeg
     cmd = [
         'ffmpeg',
@@ -212,11 +234,14 @@ def resize_video(input_path, output_path, target_resolution):
 # Concatenate videos without transitions
 def concatenate_videos(clip_paths, output_path):
     """Concatenate videos without transitions."""
+    print(f"Concatenating {len(clip_paths)} videos to {output_path}")
     if len(clip_paths) < 1:
+        print("Error: No clips to concatenate")
         return None
     
     if len(clip_paths) == 1:
         # If only one clip, just copy it
+        print("Only one clip, copying directly")
         shutil.copy(clip_paths[0], output_path)
         return output_path
     
@@ -229,6 +254,8 @@ def concatenate_videos(clip_paths, output_path):
     with open(concat_path, 'w') as f:
         for clip_path in clip_paths:
             f.write(f"file '{clip_path}'\n")
+    
+    print(f"Created concat file at {concat_path}")
     
     # Concatenate videos using ffmpeg
     cmd = [
@@ -251,6 +278,7 @@ def concatenate_videos(clip_paths, output_path):
 # Add audio to video
 def add_audio_to_video(video_path, audio_path, output_path, config):
     """Add audio to video with volume adjustment and fade effects."""
+    print(f"Adding audio {audio_path} to video {video_path}")
     audio_config = config['audio']
     
     # Get video duration
@@ -261,6 +289,7 @@ def add_audio_to_video(video_path, audio_path, output_path, config):
     
     # Create audio filter
     audio_filter = f"volume={audio_config['volume']},afade=t=in:st=0:d={audio_config['fade_in']},afade=t=out:st={video_info['duration'] - audio_config['fade_out']}:d={audio_config['fade_out']}"
+    print(f"Audio filter: {audio_filter}")
     
     # Add audio to video using ffmpeg
     cmd = [
@@ -284,6 +313,7 @@ def add_audio_to_video(video_path, audio_path, output_path, config):
 # Update request status in DynamoDB
 def update_request_status(request_id, status, result=None):
     """Update the status of a montage request in DynamoDB."""
+    print(f"Updating request status: {request_id} to {status}")
     update_expression = "SET #status = :status, updatedAt = :updatedAt"
     expression_attribute_names = {
         '#status': 'status'
@@ -305,6 +335,7 @@ def update_request_status(request_id, status, result=None):
             ExpressionAttributeNames=expression_attribute_names,
             ExpressionAttributeValues=expression_attribute_values
         )
+        print(f"Successfully updated request status for {request_id}")
         return True
     except Exception as e:
         print(f"Error updating request status: {e}")
@@ -313,6 +344,7 @@ def update_request_status(request_id, status, result=None):
 # Get videos from specific folder in S3 bucket
 def get_videos_from_folder(bucket_name, folder_path, num_videos=None):
     """Get videos from the specified folder in the S3 bucket."""
+    print(f"Getting videos from folder: {bucket_name}/{folder_path}")
     # Ensure folder path has a trailing slash
     if not folder_path.endswith('/'):
         folder_path += '/'
@@ -332,17 +364,23 @@ def get_videos_from_folder(bucket_name, folder_path, num_videos=None):
     if not video_files:
         raise ValueError(f"No video files found in bucket '{bucket_name}' with prefix '{folder_path}'")
     
+    print(f"Found {len(video_files)} videos in folder")
+    
     if num_videos and num_videos < len(video_files):
-        return random.sample(video_files, num_videos)
+        selected_videos = random.sample(video_files, num_videos)
+        print(f"Selected {len(selected_videos)} random videos")
+        return selected_videos
     return video_files
 
 # Get music from specific folder in S3 bucket
 def get_music_from_folder(bucket_name, folder_path):
     """Get a random music file from the specified folder in the S3 bucket."""
+    print(f"Getting music from folder: {bucket_name}/{folder_path}")
     # If folder path is empty, use default music folder from config
     if not folder_path:
         config = load_config()
         folder_path = config['s3']['music_prefix']
+        print(f"Using default music folder: {folder_path}")
     
     # Ensure folder path has a trailing slash
     if not folder_path.endswith('/'):
@@ -363,11 +401,14 @@ def get_music_from_folder(bucket_name, folder_path):
     if not music_files:
         raise ValueError(f"No music files found in bucket '{bucket_name}' with prefix '{folder_path}'")
     
-    return random.choice(music_files)
+    selected_music = random.choice(music_files)
+    print(f"Selected music file: {selected_music}")
+    return selected_music
 
 # Main function to create video compilation
 def create_video_compilation(event, context):
     """Create a video compilation based on the request parameters."""
+    print(f"Starting video compilation with event: {event}")
     request_id = event['requestId']
     video_folder = event['videoFolder']
     music_folder = event['musicFolder']
@@ -396,6 +437,7 @@ def create_video_compilation(event, context):
     
     # Create temporary directory for intermediate files
     temp_dir = tempfile.mkdtemp(dir='/tmp')
+    print(f"Created temporary directory: {temp_dir}")
     
     try:
         # Load configuration
@@ -421,7 +463,9 @@ def create_video_compilation(event, context):
         clips = []
         clip_infos = []
         
+        print(f"Processing {len(video_keys)} videos")
         for i, video_key in enumerate(video_keys):
+            print(f"Processing video {i+1}/{len(video_keys)}: {video_key}")
             local_video_path = os.path.join(temp_dir, f"source_{i}.mp4")
             download_from_s3(video_bucket, video_key, local_video_path)
             
@@ -440,6 +484,7 @@ def create_video_compilation(event, context):
         landscape_count = len(clip_infos) - portrait_count
         
         is_output_portrait = portrait_count > landscape_count
+        print(f"Output orientation: {'portrait' if is_output_portrait else 'landscape'} (portrait: {portrait_count}, landscape: {landscape_count})")
         
         # Get target resolution
         output_resolution = config['video']['output_resolution']
@@ -447,11 +492,14 @@ def create_video_compilation(event, context):
             output_resolution['portrait' if is_output_portrait else 'landscape']['width'],
             output_resolution['portrait' if is_output_portrait else 'landscape']['height']
         )
+        print(f"Target resolution: {target_resolution}")
         
         # Resize clips to match target resolution
         resized_clips = []
         
+        print(f"Resizing {len(clips)} clips")
         for i, clip_path in enumerate(clips):
+            print(f"Resizing clip {i+1}/{len(clips)}")
             resized_path = os.path.join(temp_dir, f"resized_{i}.mp4")
             resized_clip = resize_video(clip_path, resized_path, target_resolution)
             
@@ -467,6 +515,7 @@ def create_video_compilation(event, context):
         
         # Add music if included
         if is_music_included and music_folder:
+            print(f"Adding music from folder: {music_folder}")
             try:
                 music_key = get_music_from_folder(music_bucket, music_folder)
                 local_music_path = os.path.join(temp_dir, "music.mp3")
@@ -479,6 +528,7 @@ def create_video_compilation(event, context):
                 # Use the video with music for the next step
                 if with_music:
                     combined_video_path = with_music_path
+                    print("Successfully added music to video")
             except Exception as e:
                 print(f"Error processing audio: {e}")
                 # Continue without music if there's an error
@@ -492,6 +542,7 @@ def create_video_compilation(event, context):
             f"{timestamp}_{unique_id}"
             f".{config['video']['output_format']}"
         )
+        print(f"Output filename: {output_filename}")
         
         # Upload final video to S3
         output_key = f"{config['s3']['output_prefix']}/{output_filename}"
@@ -503,6 +554,7 @@ def create_video_compilation(event, context):
             Params={'Bucket': output_bucket, 'Key': output_key},
             ExpiresIn=config.get('s3', {}).get('url_expiration', 604800)  # Default 7 days
         )
+        print(f"Generated presigned URL with expiration: {config.get('s3', {}).get('url_expiration', 604800)} seconds")
         
         result = {
             'bucket': output_bucket,
@@ -537,13 +589,16 @@ def create_video_compilation(event, context):
     
     finally:
         # Clean up temporary directory
+        print(f"Cleaning up temporary directory: {temp_dir}")
         shutil.rmtree(temp_dir)
 
 def lambda_handler(event, context):
     """Lambda handler for the video compiler"""
+    print(f"Lambda handler invoked with event: {event}")
     # If the event has a requestId, assume it's a compilation request
     try:
         uuid_id = str(uuid.uuid4())[:8]
+        print(f"Generated request ID: {uuid_id}")
         body = json.loads(event['body'])
         body['requestId'] = uuid_id
         return create_video_compilation(body, context)
