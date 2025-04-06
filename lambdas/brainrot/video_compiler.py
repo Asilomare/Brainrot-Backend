@@ -575,7 +575,11 @@ def create_video_compilation(event, context):
                 'message': 'Video compilation completed successfully',
                 'requestId': request_id,
                 'video': result
-            })
+            }),
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
         }
     
     except Exception as e:
