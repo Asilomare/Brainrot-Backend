@@ -2,6 +2,7 @@ from aws_cdk import (
     # Duration,
     Stack,
     aws_s3 as s3,
+    Duration,
     # aws_sqs as sqs,
     aws_lambda as _lambda,
     aws_apigateway as apigw,
@@ -39,11 +40,13 @@ class ApiStack(Stack):
                 'MONTAGE_VIDEOS_BUCKET': video_bucket.bucket_name,
                 'MONTAGE_MUSIC_BUCKET': music_bucket.bucket_name,
                 'MONTAGE_OUTPUT_BUCKET': output_bucket.bucket_name
-            }
+            },
+            timeout=Duration.minutes(3)
         )
         table.grant_read_write_data(lambda_video_compiler)
         video_bucket.grant_read_write(lambda_video_compiler)
         music_bucket.grant_read_write(lambda_video_compiler)
+        output_bucket.grant_read_write(lambda_video_compiler)
 
         lambda_requests_retriever = _lambda.Function(self, 'LambdaRequestsRetriever',
             runtime=_lambda.Runtime.PYTHON_3_11,

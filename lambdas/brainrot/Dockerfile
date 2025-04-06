@@ -2,6 +2,7 @@ FROM public.ecr.aws/lambda/python:3.11
 
 # Copy function code
 COPY video_compiler.py ${LAMBDA_TASK_ROOT}
+COPY config.json ${LAMBDA_TASK_ROOT}
 
 # Install ffmpeg and ffprobe
 COPY ffmpeg-7.0.2-amd64-static/ffmpeg /usr/local/bin/
