@@ -175,7 +175,26 @@ def extract_random_clip(video_path, output_path, config):
         output_path
     ]
     
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    # Check if the command was successful
+    if result.returncode != 0 or not os.path.exists(output_path):
+        stderr = result.stderr.decode('utf-8')
+        print(f"Error during clip extraction: {stderr}")
+        return None
+    
+    # Verify the output file is valid
+    verify_cmd = [
+        'ffprobe',
+        '-v', 'error',
+        output_path
+    ]
+    verify_result = subprocess.run(verify_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    if verify_result.returncode != 0:
+        stderr = verify_result.stderr.decode('utf-8')
+        print(f"Output clip validation failed: {stderr}")
+        return None
     
     # Return clip info
     clip_info = {
@@ -228,7 +247,26 @@ def resize_video(input_path, output_path, target_resolution):
         output_path
     ]
     
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    # Check if the command was successful
+    if result.returncode != 0 or not os.path.exists(output_path):
+        stderr = result.stderr.decode('utf-8')
+        print(f"Error during video resizing: {stderr}")
+        return None
+    
+    # Verify the output file is valid
+    verify_cmd = [
+        'ffprobe',
+        '-v', 'error',
+        output_path
+    ]
+    verify_result = subprocess.run(verify_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    if verify_result.returncode != 0:
+        stderr = verify_result.stderr.decode('utf-8')
+        print(f"Output file validation failed: {stderr}")
+        return None
     
     return output_path
 
@@ -314,7 +352,26 @@ def add_audio_to_video(video_path, audio_path, output_path, config):
         output_path
     ]
     
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    # Check if the command was successful
+    if result.returncode != 0 or not os.path.exists(output_path):
+        stderr = result.stderr.decode('utf-8')
+        print(f"Error during audio addition: {stderr}")
+        return None
+    
+    # Verify the output file is valid
+    verify_cmd = [
+        'ffprobe',
+        '-v', 'error',
+        output_path
+    ]
+    verify_result = subprocess.run(verify_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    if verify_result.returncode != 0:
+        stderr = verify_result.stderr.decode('utf-8')
+        print(f"Output file validation failed after adding audio: {stderr}")
+        return None
     
     return output_path
 
