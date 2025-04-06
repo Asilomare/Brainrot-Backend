@@ -16,6 +16,7 @@ import shutil
 from datetime import datetime
 import boto3
 import uuid
+import traceback
 from os import environ
 
 # Initialize S3 client
@@ -330,7 +331,7 @@ def update_request_status(request_id, status, result=None):
     
     try:
         requests_table.update_item(
-            Key={'pk': 'brainrot#montage', 'ts': datetime.now().isoformat() + '#' + request_id},
+            Key={'pk': 'montage#requests', 'ts': datetime.now().isoformat() + '#' + request_id},
             UpdateExpression=update_expression,
             ExpressionAttributeNames=expression_attribute_names,
             ExpressionAttributeValues=expression_attribute_values
@@ -581,6 +582,7 @@ def create_video_compilation(event, context):
     except Exception as e:
         error_message = f"Error creating video compilation: {str(e)}"
         print(error_message)
+        print(traceback.format_exc())
         update_request_status(request_id, 'FAILED', {'error': error_message})
         return {
             'statusCode': 500,
