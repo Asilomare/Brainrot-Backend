@@ -269,10 +269,17 @@ def concatenate_videos(clip_paths, output_path):
         output_path
     ]
     
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     
     # Clean up
     os.unlink(concat_path)
+
+    if result.returncode != 0 or not os.path.exists(output_path):
+        stderr = result.stderr.decode('utf-8')
+        print(f"Error during video concatenation: {stderr}")
+        return None
+    
+    print(f"Successfully created concatenated video at {output_path}")
     
     return output_path
 
