@@ -20,7 +20,7 @@ def get_montage_requests(event, context):
         
         if request_id:
             # Get a specific request by ID
-            response = requests_table.get_item(Key={'id': request_id})
+            response = requests_table.get_item(Key={'pk': request_id})
             
             if 'Item' not in response:
                 return {

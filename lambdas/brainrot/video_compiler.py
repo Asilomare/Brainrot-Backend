@@ -300,7 +300,7 @@ def update_request_status(request_id, status, result=None):
     
     try:
         requests_table.update_item(
-            Key={'id': request_id, 'ts': datetime.now().isoformat()},
+            Key={'pk': request_id, 'ts': datetime.now().isoformat()},
             UpdateExpression=update_expression,
             ExpressionAttributeNames=expression_attribute_names,
             ExpressionAttributeValues=expression_attribute_values
