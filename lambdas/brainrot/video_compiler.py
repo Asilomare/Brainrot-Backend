@@ -227,8 +227,8 @@ def resize_video(input_path, output_path, target_resolution):
     scale_factor = min(width_ratio, height_ratio)
     
     # Calculate new dimensions
-    new_width = int(video_info['width'] * scale_factor)
-    new_height = int(video_info['height'] * scale_factor)
+    new_width = max(int(video_info['width'] * scale_factor), 2)
+    new_height = max(int(video_info['height'] * scale_factor), 2)
     
     # Calculate padding
     x_offset = (target_width - new_width) // 2
@@ -236,7 +236,7 @@ def resize_video(input_path, output_path, target_resolution):
     
     print(f"Resize parameters: new_width={new_width}, new_height={new_height}, x_offset={x_offset}, y_offset={y_offset}")
     
-    # Resize and pad the video using ffmpeg
+    # Resize and pad the video using ffmpeg - updated command with more options
     cmd = [
         'ffmpeg',
         '-y',
@@ -244,20 +244,30 @@ def resize_video(input_path, output_path, target_resolution):
         '-i', input_path,
         '-vf', f'scale={new_width}:{new_height},pad={target_width}:{target_height}:{x_offset}:{y_offset}:black',
         '-c:v', 'libx264',
-        '-c:a', 'copy',
+        '-preset', 'medium',
+        '-pix_fmt', 'yuv420p',
+        '-crf', '23',
+        '-r', '30',
+        '-c:a', 'aac',
+        '-strict', 'experimental',
         output_path
     ]
     
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
-    # Check if the command was successful
-    if result.returncode != 0 or not os.path.exists(output_path):
-        stderr = result.stderr.decode('utf-8')
-        stdout = result.stdout.decode('utf-8')
-        print(f"Error during video resizing: {stderr}")
-        print(f"Command output: {stdout}")
-        print(f"Return code: {result.returncode}")
-        print(f"Command: {' '.join(cmd)}")
+    # Add timeout to prevent endless hanging
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+        
+        # Check if the command was successful
+        if result.returncode != 0 or not os.path.exists(output_path):
+            stderr = result.stderr.decode('utf-8')
+            stdout = result.stdout.decode('utf-8')
+            print(f"Error during video resizing: {stderr}")
+            print(f"Command output: {stdout}")
+            print(f"Return code: {result.returncode}")
+            print(f"Command: {' '.join(cmd)}")
+            return None
+    except subprocess.TimeoutExpired:
+        print(f"Timeout expired during video resizing for {input_path}")
         return None
     
     # Verify the output file is valid
