@@ -1,0 +1,97 @@
+provider:
+  name: aws
+  runtime: python3.11
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    STAGE: ${self:provider.stage}
+    MONTAGE_REQUESTS_TABLE: ${self:custom.montageRequestsTable}
+    S3_BUCKET: ${self:custom.brainrotBucket}
+    COMPILER_FUNCTION_NAME: ${self:service}-${self:provider.stage}-compileMontage
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:ListBucket
+          Resource:
+            - "arn:aws:s3:::${self:custom.brainrotBucket}/*"
+            - "arn:aws:s3:::${self:custom.brainrotBucket}"
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+          Resource:
+            - !GetAtt MontageRequestsTable.Arn
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource: "*"
+
+functions:
+  compileMontage:
+    handler: lambdas/brainrot/video_compiler.lambda_handler
+    timeout: 900 # 15 minutes
+    memorySize: 2048
+    events:
+      - http:
+          path: compile-montage
+          method: post
+          cors: true
+  
+  processMontageRequest:
+    handler: lambdas/brainrot/handler.process_montage_request
+    timeout: 30
+    events:
+      - http:
+          path: montage
+          method: post
+          cors: true
+  
+  getMontageRequests:
+    handler: lambdas/brainrot/retrieve_montages.lambda_handler
+    timeout: 30
+    events:
+      - http:
+          path: montage
+          method: get
+          cors: true
+      - http:
+          path: montage/{id}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+      - http:
+          path: montage/status
+          method: post
+          cors: true
+
+custom:
+  brainrotBucket: ${opt:bucket, 'brainrot-${self:provider.stage}'}
+  montageRequestsTable: montage-requests-${self:provider.stage}
+
+resources:
+  Resources:
+    MontageRequestsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.montageRequestsTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: ttl
+          Enabled: true 
