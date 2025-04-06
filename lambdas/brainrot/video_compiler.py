@@ -252,7 +252,11 @@ def resize_video(input_path, output_path, target_resolution):
     # Check if the command was successful
     if result.returncode != 0 or not os.path.exists(output_path):
         stderr = result.stderr.decode('utf-8')
+        stdout = result.stdout.decode('utf-8')
         print(f"Error during video resizing: {stderr}")
+        print(f"Command output: {stdout}")
+        print(f"Return code: {result.returncode}")
+        print(f"Command: {' '.join(cmd)}")
         return None
     
     # Verify the output file is valid
