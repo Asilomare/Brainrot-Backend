@@ -16,11 +16,11 @@ def get_montage_requests(event, context):
     try:
         # Check if this is a GET request for a specific request
         path_parameters = event.get('pathParameters', {})
-        request_id = path_parameters.get('id') if path_parameters else None
+        sk = path_parameters.get('id') if path_parameters else None
         
-        if request_id:
+        if sk:
             # Get a specific request by ID
-            response = requests_table.get_item(Key={'pk': request_id})
+            response = requests_table.get_item(Key={'pk': 'montage#requests', 'ts': sk})
             
             if 'Item' not in response:
                 return {
@@ -30,7 +30,7 @@ def get_montage_requests(event, context):
                         'Access-Control-Allow-Origin': '*'
                     },
                     'body': json.dumps({
-                        'message': f'Montage request with ID {request_id} not found'
+                        'message': f'Montage request with ID {sk} not found'
                     })
                 }
             
