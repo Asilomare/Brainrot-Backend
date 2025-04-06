@@ -183,10 +183,13 @@ def extract_random_clip(video_path, output_path, config):
         print(f"Error during clip extraction: {stderr}")
         return None
     
-    # Verify the output file is valid
+    # Verify the output file is valid and has video stream
     verify_cmd = [
         'ffprobe',
         '-v', 'error',
+        '-select_streams', 'v',
+        '-show_entries', 'stream=codec_type',
+        '-of', 'json',
         output_path
     ]
     verify_result = subprocess.run(verify_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
