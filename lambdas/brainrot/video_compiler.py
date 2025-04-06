@@ -240,6 +240,7 @@ def resize_video(input_path, output_path, target_resolution):
     cmd = [
         'ffmpeg',
         '-y',
+        '-v', 'verbose',
         '-i', input_path,
         '-vf', f'scale={new_width}:{new_height},pad={target_width}:{target_height}:{x_offset}:{y_offset}:black',
         '-c:v', 'libx264',
