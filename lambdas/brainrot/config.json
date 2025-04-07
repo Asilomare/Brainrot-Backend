@@ -1,18 +1,10 @@
 {
   "s3": {
-    "bucket": "brainrot-dev",
-    "video_prefix": "videos/",
     "music_prefix": "music/",
     "output_prefix": "montages",
     "url_expiration": 604800
   },
   "video": {
-    "clip_selection": {
-      "num_clips": 5,
-      "min_duration": 3.0,
-      "max_duration": 10.0,
-      "random_start": true
-    },
     "output_resolution": {
       "portrait": {
         "width": 1080,
@@ -31,4 +23,4 @@
     "fade_in": 1.0,
     "fade_out": 1.0
   }
-} 
+}

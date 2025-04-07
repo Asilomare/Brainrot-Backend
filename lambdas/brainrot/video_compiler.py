@@ -140,10 +140,9 @@ def get_video_info(video_path):
     return None
 
 # Extract a random clip from a video
-def extract_random_clip(video_path, output_path, config):
-    """Extract a random clip from the video based on configuration."""
-    print(f"Extracting random clip from: {video_path} to {output_path}")
-    clip_config = config['video']['clip_selection']
+def extract_random_clip(video_path, output_path, clip_duration):
+    """Extract a random clip from the video with specified duration."""
+    print(f"Extracting random clip from: {video_path} to {output_path} with duration: {clip_duration}")
     
     # Get video info
     video_info = get_video_info(video_path)
@@ -151,12 +150,11 @@ def extract_random_clip(video_path, output_path, config):
         print(f"Error: Could not get video information for {video_path}")
         return None
     
-    # Determine clip duration
-    duration = random.uniform(clip_config['min_duration'], clip_config['max_duration'])
-    duration = min(duration, video_info['duration'])
+    # Ensure clip duration doesn't exceed video duration
+    duration = min(clip_duration, video_info['duration'])
     
     # Determine start time
-    if clip_config['random_start'] and video_info['duration'] > duration:
+    if video_info['duration'] > duration:
         max_start = video_info['duration'] - duration
         start_time = random.uniform(0, max_start)
     else:
@@ -499,6 +497,9 @@ def create_video_compilation(event, context):
     request_id = event['requestId']
     video_folder = event['videoFolder']
     music_folder = event['musicFolder']
+    num_clips = event['numClips']
+    video_length = event['videoLength']
+    clip_duration = event['clipDuration']
     is_music_included = event['isMusicIncluded']
     video_bucket = environ['MONTAGE_VIDEOS_BUCKET']
     music_bucket = environ['MONTAGE_MUSIC_BUCKET']
@@ -530,12 +531,17 @@ def create_video_compilation(event, context):
         # Load configuration
         config = load_config()
         
+        # Calculate number of clips needed based on video_length and clip_duration if provided
+        # if video_length and clip_duration and not num_clips:
+        #     num_clips = max(1, int(video_length / clip_duration))
+        #     print(f"Calculated number of clips: {num_clips} based on video_length: {video_length} and clip_duration: {clip_duration}")
+        
         # Get videos from the specified folder
         try:
             video_keys = get_videos_from_folder(
                 video_bucket, 
                 video_folder, 
-                config['video']['clip_selection']['num_clips']
+                num_clips
             )
         except Exception as e:
             error_message = f"Error retrieving videos: {str(e)}"
@@ -546,7 +552,7 @@ def create_video_compilation(event, context):
                 'body': json.dumps({'message': error_message})
             }
 
-        # Extract random clips from videos
+        # Extract clips from videos
         clips = []
         clip_infos = []
         
@@ -557,7 +563,7 @@ def create_video_compilation(event, context):
             download_from_s3(video_bucket, video_key, local_video_path)
             
             clip_path = os.path.join(temp_dir, f"clip_{i}.mp4")
-            clip_info = extract_random_clip(local_video_path, clip_path, config)
+            clip_info = extract_random_clip(local_video_path, clip_path, clip_duration)
             
             if clip_info:
                 clips.append(clip_path)
