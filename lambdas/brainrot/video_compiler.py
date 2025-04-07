@@ -395,7 +395,7 @@ def add_audio_to_video(video_path, audio_path, output_path, config):
     return output_path
 
 # Update request status in DynamoDB
-def update_request_status(request_id, status, result=None):
+def update_request_status(request_id, status, result=None, video_folder=None):
     """Update the status of a montage request in DynamoDB."""
     print(f"Updating request status: {request_id} to {status}")
     update_expression = "SET #status = :status, updatedAt = :updatedAt"
@@ -411,7 +411,10 @@ def update_request_status(request_id, status, result=None):
         update_expression += ", #result = :result"
         expression_attribute_names['#result'] = 'result'
         expression_attribute_values[':result'] = result
-    
+    if video_folder:
+        update_expression += ", #videoFolder = :videoFolder"
+        expression_attribute_names['#videoFolder'] = 'videoFolder'
+        expression_attribute_values[':videoFolder'] = video_folder
     try:
         requests_table.update_item(
             Key={'pk': 'montage#requests', 'ts': datetime.now().isoformat() + '#' + request_id},
@@ -650,7 +653,7 @@ def create_video_compilation(event, context):
         }
         
         # Update request status to completed
-        update_request_status(request_id, 'COMPLETED', result)
+        update_request_status(request_id, 'COMPLETED', result, video_folder)
         
         print(f"Video compilation created successfully: {s3_url}")
         return {
