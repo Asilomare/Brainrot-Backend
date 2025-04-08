@@ -308,8 +308,9 @@ def concatenate_videos(clip_paths, output_path):
     # Write the concat file
     with open(concat_path, 'w') as f:
         for clip_path in clip_paths:
-            filename = os.path.basename(clip_path)
-            f.write(f"file '{filename}'\n")
+            print(clip_path)
+            # filename = os.path.basename(clip_path)
+            f.write(f"file '{clip_path}'\n")
     
     print(f"Created concat file at {concat_path}")
     

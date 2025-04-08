@@ -41,6 +41,7 @@ class ApiStack(Stack):
                 'MONTAGE_MUSIC_BUCKET': music_bucket.bucket_name,
                 'MONTAGE_OUTPUT_BUCKET': output_bucket.bucket_name
             },
+            memory_size=512,
             timeout=Duration.minutes(3)
         )
         table.grant_read_write_data(lambda_video_compiler)
