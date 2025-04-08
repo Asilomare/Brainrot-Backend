@@ -117,6 +117,8 @@ def get_video_info(video_path):
         print(f"Error decoding ffprobe JSON output for stream info: {result.stdout.decode()}")
         print(f"ffprobe stderr: {result.stderr.decode()}")
         return None
+    
+    print(f"Video info: {info}")
 
     if 'streams' in info and info['streams']:
         stream = info['streams'][0]
