@@ -219,8 +219,38 @@ def resize_video(input_path, output_path, target_resolution):
     if not video_info:
         print(f"Error: Could not get video information for {input_path}")
         return None
+
+    # Check if the video is already the target resolution and orientation
+    # Target is always portrait in this script currently
+    is_target_portrait = target_height > target_width
+    if video_info['is_portrait'] == is_target_portrait and \
+       video_info['width'] == target_width and \
+       video_info['height'] == target_height:
+        print(f"Skipping resize for {input_path} as it already matches target resolution and orientation.")
+        try:
+            # Copy the input file to the output path if they are different
+            if os.path.abspath(input_path) != os.path.abspath(output_path):
+                 shutil.copy(input_path, output_path)
+                 print(f"Copied {input_path} to {output_path}")
+            else:
+                 # If input and output paths are the same, no action needed
+                 print(f"Input and output paths are the same ({output_path}), no copy needed.")
+            # Ensure the output file exists before returning
+            if os.path.exists(output_path):
+                return output_path
+            else:
+                print(f"Error: Output file {output_path} does not exist after copy/skip.")
+                return None
+        except Exception as e:
+            print(f"Error copying or accessing file {input_path} to {output_path}: {e}")
+            return None
     
     # Calculate scaling factor
+    # Ensure width and height are not zero to avoid division by zero error
+    if video_info['width'] == 0 or video_info['height'] == 0:
+        print(f"Error: Invalid video dimensions for {input_path}: width={video_info['width']}, height={video_info['height']}")
+        return None
+
     width_ratio = target_width / video_info['width']
     height_ratio = target_height / video_info['height']
     
