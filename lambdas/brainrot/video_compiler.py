@@ -572,25 +572,22 @@ def create_video_compilation(event, context):
         if not clips:
             raise ValueError("No valid video clips could be extracted")
         
-        # Determine if most clips are portrait or landscape
-        portrait_count = sum(1 for info in clip_infos if info['is_portrait'])
-        landscape_count = len(clip_infos) - portrait_count
+        # Always use portrait mode for output
+        is_output_portrait = True
+        print(f"Output orientation: portrait (forced)")
         
-        is_output_portrait = portrait_count > landscape_count
-        print(f"Output orientation: {'portrait' if is_output_portrait else 'landscape'} (portrait: {portrait_count}, landscape: {landscape_count})")
-        
-        # Get target resolution
+        # Get target resolution for portrait mode
         output_resolution = config['video']['output_resolution']
         target_resolution = (
-            output_resolution['portrait' if is_output_portrait else 'landscape']['width'],
-            output_resolution['portrait' if is_output_portrait else 'landscape']['height']
+            output_resolution['portrait']['width'],
+            output_resolution['portrait']['height']
         )
         print(f"Target resolution: {target_resolution}")
         
         # Resize clips to match target resolution
         resized_clips = []
         
-        print(f"Resizing {len(clips)} clips")
+        print(f"Resizing {len(clips)} clips to portrait mode")
         for i, clip_path in enumerate(clips):
             print(f"Resizing clip {i+1}/{len(clips)}")
             resized_path = os.path.join(temp_dir, f"resized_{i}.mp4")
@@ -631,7 +628,7 @@ def create_video_compilation(event, context):
         unique_id = str(uuid.uuid4())[:8]
         output_filename = (
             f"{config['video']['output_filename']}_{request_id}_"
-            f"{'portrait' if is_output_portrait else 'landscape'}_"
+            f"portrait_"
             f"{timestamp}_{unique_id}"
             f".{config['video']['output_format']}"
         )
@@ -654,7 +651,7 @@ def create_video_compilation(event, context):
             'key': output_key,
             's3Url': s3_url,
             'publicUrl': presigned_url,
-            'orientation': 'portrait' if is_output_portrait else 'landscape',
+            'orientation': 'portrait',
             'completedAt': datetime.now().isoformat()
         }
         
