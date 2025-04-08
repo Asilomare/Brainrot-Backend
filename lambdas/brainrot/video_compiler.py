@@ -96,26 +96,50 @@ def upload_to_s3(local_path, bucket_name, key):
 
 # Get video information using ffprobe
 def get_video_info(video_path):
-    """Get video information using ffprobe."""
+    """Get video information using ffprobe, accounting for rotation."""
     print(f"Getting video info for: {video_path}")
-    cmd = [
+    
+    # Command to get width, height, and rotation
+    info_cmd = [
         'ffprobe', 
         '-v', 'error', 
         '-select_streams', 'v:0', 
-        '-show_entries', 'stream=width,height,duration', 
+        '-show_entries', 'stream=width,height:stream_tags=rotate', 
         '-of', 'json', 
         video_path
     ]
     
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    info = json.loads(result.stdout)
+    result = subprocess.run(info_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     
+    try:
+        info = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print(f"Error decoding ffprobe JSON output for stream info: {result.stdout.decode()}")
+        print(f"ffprobe stderr: {result.stderr.decode()}")
+        return None
+
     if 'streams' in info and info['streams']:
         stream = info['streams'][0]
         width = int(stream.get('width', 0))
         height = int(stream.get('height', 0))
         
-        # Get duration
+        # Check for rotation tag
+        rotation = 0
+        if 'tags' in stream and 'rotate' in stream['tags']:
+            try:
+                rotation = int(stream['tags']['rotate'])
+            except ValueError:
+                print(f"Warning: Could not parse rotation tag value: {stream['tags']['rotate']}")
+                rotation = 0 # Default to 0 if parsing fails
+        
+        print(f"Original dimensions: width={width}, height={height}, rotation={rotation}")
+
+        # Swap width and height if rotation is 90 or 270 degrees
+        if rotation in [90, 270]:
+            print(f"Applying rotation {rotation}: Swapping width and height.")
+            width, height = height, width
+        
+        # Get duration (separate call as format info is needed)
         duration_cmd = [
             'ffprobe', 
             '-v', 'error', 
@@ -124,19 +148,41 @@ def get_video_info(video_path):
             video_path
         ]
         duration_result = subprocess.run(duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        duration_info = json.loads(duration_result.stdout)
-        duration = float(duration_info['format']['duration']) if 'format' in duration_info else 0
+        duration = 0.0
+        try:
+            duration_info = json.loads(duration_result.stdout)
+            if 'format' in duration_info and 'duration' in duration_info['format']:
+                 # Handle potential None or invalid duration string before converting to float
+                 duration_str = duration_info['format']['duration']
+                 if duration_str is not None:
+                     try:
+                         duration = float(duration_str)
+                     except (ValueError, TypeError):
+                         print(f"Warning: Could not parse duration value: {duration_str}")
+                         duration = 0.0
+                 else:
+                    print("Warning: Duration field is null.")
+                    duration = 0.0
+            else:
+                print("Warning: Duration information not found in format.")
+        except json.JSONDecodeError:
+            print(f"Error decoding ffprobe JSON output for duration: {duration_result.stdout.decode()}")
+            print(f"ffprobe stderr: {duration_result.stderr.decode()}")
+            # Keep duration as 0.0 if decoding fails
         
         video_info = {
-            'width': width,
-            'height': height,
+            'width': width, # Now represents displayed width
+            'height': height, # Now represents displayed height
             'duration': duration,
-            'is_portrait': height > width
+            'is_portrait': height > width # Calculated based on displayed dimensions
         }
-        print(f"Video info: {video_info}")
+        print(f"Video info (adjusted for rotation): {video_info}")
         return video_info
     
+    stderr_output = result.stderr.decode()
     print(f"Failed to get video info for: {video_path}")
+    if stderr_output:
+        print(f"ffprobe error output: {stderr_output}")
     return None
 
 # Extract a random clip from a video
