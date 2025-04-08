@@ -18,6 +18,8 @@ import boto3
 import uuid
 import traceback
 from os import environ
+import math
+import struct
 
 # Initialize S3 client
 s3_client = boto3.client('s3')
@@ -94,98 +96,451 @@ def upload_to_s3(local_path, bucket_name, key):
     s3_client.upload_file(local_path, bucket_name, key)
     return f"s3://{bucket_name}/{key}"
 
+# Helper functions adapted from test.py for reading rotation from header
+def _read_atom(datastream):
+    """Read an atom and return a tuple of (size, type)."""
+    try:
+        size_bytes = datastream.read(4)
+        type_bytes = datastream.read(4)
+        if not size_bytes or not type_bytes:
+            return None, None # Indicate end of stream or error
+        size = struct.unpack(">L", size_bytes)[0]
+        atom_type = type_bytes # Keep as bytes for comparison
+        return size, atom_type
+    except struct.error:
+        print("Struct unpack error reading atom header.")
+        return None, None
+
+def _get_index(datastream):
+    """Return an index of top-level atoms."""
+    index = []
+    start_pos = datastream.tell()
+    datastream.seek(0, os.SEEK_END)
+    file_size = datastream.tell()
+    datastream.seek(start_pos)
+
+    while datastream.tell() < file_size:
+        current_pos = datastream.tell()
+        atom_size, atom_type = _read_atom(datastream)
+
+        if atom_size is None:
+            print("Atom read failed, stopping index creation.")
+            break
+
+        if atom_size < 8:
+            print(f"Warning: Atom size {atom_size} is less than 8 bytes. Stopping.")
+            break # Avoid potential infinite loops or errors
+
+        index.append((atom_type, current_pos, atom_size))
+        next_pos = current_pos + atom_size
+
+        if next_pos > file_size:
+             print(f"Warning: Atom {atom_type.decode('latin-1', errors='ignore')} size {atom_size} exceeds file boundary. Stopping.")
+             break
+
+        try:
+            datastream.seek(next_pos)
+        except OSError as e:
+            print(f"Error seeking to next atom position {next_pos}: {e}")
+            break
+
+    # Basic validation
+    top_level_atoms = {item[0] for item in index}
+    required_atoms = {b"ftyp", b"moov", b"mdat"}
+    if not required_atoms.issubset(top_level_atoms):
+        print(f"Warning: Missing required top-level atoms. Found: {[a.decode('latin-1', errors='ignore') for a in top_level_atoms]}")
+        # Don't raise an error here, let the calling function handle it if 'moov' is missing later
+
+    return index
+
+
+def _find_atoms(size, datastream):
+    """Generator yielding 'mvhd' or 'tkhd' atoms within a parent atom."""
+    stop = datastream.tell() + size
+
+    while datastream.tell() < stop:
+        current_pos = datastream.tell()
+        atom_size, atom_type = _read_atom(datastream)
+
+        if atom_size is None or atom_type is None:
+            print("Read atom failed during find_atoms.")
+            break
+
+        if atom_size < 8:
+             print(f"Warning: Atom size {atom_size} < 8 during find_atoms. Stopping search in this branch.")
+             break # Stop searching this branch
+
+        end_of_atom = current_pos + atom_size
+        if end_of_atom > stop:
+            print(f"Warning: Atom {atom_type.decode('latin-1', errors='ignore')} size {atom_size} exceeds parent boundary {stop}. Skipping.")
+            # Attempt to recover by seeking to parent boundary? Or just break? Let's break.
+            break
+
+
+        if atom_type == b"trak":
+            # Search within 'trak' atom
+            yield from _find_atoms(atom_size - 8, datastream)
+        elif atom_type in [b"mvhd", b"tkhd"]:
+            yield atom_type
+            # Ensure stream position is correct after yielding
+            datastream.seek(end_of_atom)
+        else:
+            # Ignore other atoms, seek to the end of it
+            try:
+                datastream.seek(end_of_atom)
+            except OSError as e:
+                 print(f"Error seeking past atom {atom_type.decode('latin-1', errors='ignore')} to position {end_of_atom}: {e}")
+                 break # Stop searching this branch if seek fails
+
+        # Defensive check against infinite loops if seek didn't advance
+        if datastream.tell() <= current_pos:
+             print(f"Warning: Stream position did not advance after processing atom {atom_type.decode('latin-1', errors='ignore')}. Breaking loop.")
+             break
+
+
+def _get_rotation_from_header(filename):
+    """Attempt to read rotation information directly from the MOOV atom."""
+    print(f"Attempting to read rotation from header for: {filename}")
+    degrees = set()
+    moov_pos = -1
+    moov_size = 0
+
+    try:
+        with open(filename, "rb") as datastream:
+            index = _get_index(datastream)
+
+            # Find the 'moov' atom position and size
+            for atom_type, pos, size in index:
+                if atom_type == b"moov":
+                    moov_pos = pos
+                    moov_size = size
+                    break
+            else:
+                print("Error: 'moov' atom not found in the file index.")
+                return None # Indicate 'moov' not found
+
+            if moov_pos == -1 or moov_size < 8:
+                 print("Error: Invalid 'moov' atom position or size.")
+                 return None
+
+
+            # Seek to the start of 'moov' atom's content
+            datastream.seek(moov_pos + 8)
+
+            # Iterate through relevant atoms within 'moov'
+            for atom_type in _find_atoms(moov_size - 8, datastream):
+                try:
+                    vf = datastream.read(4)
+                    if len(vf) < 4: # Check if read was successful
+                         print(f"Error: Could not read version/flags for {atom_type.decode('latin-1', errors='ignore')}")
+                         continue # Skip this atom
+                    version = struct.unpack(">Bxxx", vf)[0]
+                    # flags = struct.unpack(">L", vf)[0] & 0x00ffffff # Flags not needed
+
+                    # Determine offset to the matrix based on version and type
+                    offset_to_matrix = -1
+                    if version == 1:
+                        if atom_type == b"mvhd":
+                            offset_to_matrix = 28 + 16 # created + modified + timescale + duration + rate + volume + reserved
+                        elif atom_type == b"tkhd":
+                             offset_to_matrix = 32 + 16 # created + modified + trackid + reserved + duration + reserved + layer + alt_group + volume + reserved
+                    elif version == 0:
+                         if atom_type == b"mvhd":
+                             offset_to_matrix = 16 + 16
+                         elif atom_type == b"tkhd":
+                             offset_to_matrix = 20 + 16
+                    else:
+                         print(f"Warning: Unknown atom version {version} for {atom_type.decode('latin-1', errors='ignore')}. Skipping matrix read.")
+                         # Need to skip the rest of this atom correctly
+                         # Assuming fixed size for known atoms - this part is brittle
+                         skip_bytes = 0
+                         if atom_type == b"mvhd": skip_bytes = 60 + 28 if version == 1 else 60 + 16 # matrix(36) + predefined(24) + next_track_id(4)
+                         elif atom_type == b"tkhd": skip_bytes = 36 + 8 if version == 1 else 36 + 8 # matrix(36) + width(4) + height(4)
+                         else: skip_bytes = 0 # fallback, likely incorrect
+
+                         # Calculate the position *before* reading version/flags
+                         atom_content_start_pos = datastream.tell() - 4
+                         # Seek from the start of the content past the known fields + matrix + remaining
+                         target_seek_pos = atom_content_start_pos + offset_to_matrix + skip_bytes if offset_to_matrix != -1 else datastream.tell() + skip_bytes # Rough estimate
+                         print(f"Attempting to skip unknown version atom to position ~{target_seek_pos}")
+                         try:
+                              datastream.seek(target_seek_pos) # This might be inaccurate
+                         except OSError as e:
+                              print(f"Error seeking past unknown version atom: {e}")
+                              # Consider breaking the loop or returning error
+                         continue # Skip to next atom in _find_atoms
+
+
+                    if offset_to_matrix != -1:
+                         # Seek to the matrix start position
+                         datastream.seek(offset_to_matrix - 4, os.SEEK_CUR) # Already read 4 bytes (vf)
+
+                         matrix_bytes = datastream.read(36)
+                         if len(matrix_bytes) < 36:
+                              print(f"Error: Could not read the full 36-byte matrix for {atom_type.decode('latin-1', errors='ignore')}")
+                              continue # Skip this atom
+
+                         matrix = list(struct.unpack(">9l", matrix_bytes))
+
+                         # Extract rotation from matrix elements (a, b, u, c, d, v, x, y, w)
+                         # Rotation (theta) formulas:
+                         # a = cos(theta), b = sin(theta)
+                         # c = -sin(theta), d = cos(theta)
+                         # We use b or c which are based on sin(theta)
+                         a = float(matrix[0]) / (1 << 16)
+                         b = float(matrix[1]) / (1 << 16)
+                         # c = float(matrix[3]) / (1 << 16) # -sin(theta)
+                         # d = float(matrix[4]) / (1 << 16) # cos(theta)
+
+                         # Calculate angle from sin (b) or cos (a)
+                         angle_rad_from_sin = math.asin(b)
+                         angle_rad_from_cos = math.acos(a)
+
+                         # Basic check: sin^2 + cos^2 = 1
+                         if not math.isclose(a**2 + b**2, 1.0, abs_tol=0.01):
+                            print(f"Warning: Matrix for {atom_type.decode('latin-1', errors='ignore')} doesn't appear to be a simple rotation matrix ({a=}, {b=}).")
+                            # Could be scaling or skew involved, angle calculation might be wrong.
+                            # Let's try to infer based on common values if possible.
+                            if math.isclose(a, 0) and math.isclose(b, 1): deg = 90.0
+                            elif math.isclose(a, -1) and math.isclose(b, 0): deg = 180.0
+                            elif math.isclose(a, 0) and math.isclose(b, -1): deg = 270.0
+                            elif math.isclose(a, 1) and math.isclose(b, 0): deg = 0.0
+                            else: deg = None # Cannot determine confidently
+                         else:
+                             # Use atan2 for better quadrant handling if we use both sin and cos
+                             # angle_rad = math.atan2(b, a) # Gives angle relative to positive x-axis
+                             # Or use the logic from original script (seems less robust)
+                             deg_from_sin = math.degrees(angle_rad_from_sin)
+                             deg_from_cos = math.degrees(angle_rad_from_cos)
+
+                             # Simple reconciliation - prefer non-zero? Or check consistency?
+                             # Original script logic: `deg = -math.degrees(math.asin(matrix[3])) % 360` -> uses c=-sin(theta)
+                             # `-math.degrees(math.asin(c_normalized)) % 360`
+                             # Or `if not deg: deg = math.degrees(math.acos(matrix[0]))` -> uses a=cos(theta)
+
+                             # Let's use atan2(sin, cos) = atan2(b, a)
+                             deg = math.degrees(math.atan2(b, a)) % 360
+
+
+                         if deg is not None:
+                             # Round to nearest 90 degrees if close, as that's standard for rotation metadata
+                             if abs(deg - 90) < 5: deg = 90.0
+                             elif abs(deg - 180) < 5: deg = 180.0
+                             elif abs(deg - 270) < 5: deg = 270.0
+                             elif abs(deg - 0) < 5 or abs(deg - 360) < 5 : deg = 0.0
+                             # Only add common rotation values
+                             if deg in [0.0, 90.0, 180.0, 270.0]:
+                                 degrees.add(int(deg))
+                                 print(f"Found potential rotation {int(deg)} from {atom_type.decode('latin-1', errors='ignore')} matrix.")
+                         else:
+                             print(f"Could not determine valid rotation angle from matrix for {atom_type.decode('latin-1', errors='ignore')}")
+
+                         # Need to skip remaining fields in the atom if any (e.g., width/height in tkhd)
+                         # This part is tricky without knowing the exact atom structure differences
+                         # Let _find_atoms handle seeking based on atom size for now.
+
+                    else:
+                        # If matrix offset wasn't determined (unknown version), we need to skip the atom
+                        # _find_atoms should handle this by seeking based on atom size.
+                        print(f"Skipping matrix read for {atom_type.decode('latin-1', errors='ignore')} due to unknown version or offset calculation failure.")
+
+                except struct.error as e:
+                    print(f"Struct error processing atom {atom_type.decode('latin-1', errors='ignore')} within moov: {e}")
+                    # Attempt to continue to the next atom if possible
+                    # This requires _find_atoms to correctly seek past the problematic atom
+                except Exception as e:
+                    print(f"Unexpected error processing atom {atom_type.decode('latin-1', errors='ignore')} within moov: {e}")
+                    # Decide whether to break or try continuing
+
+        # Return logic based on findings
+        if len(degrees) == 0:
+            print("No rotation found in any mvhd/tkhd matrix.")
+            return 0 # Assume 0 if none found
+        elif len(degrees) == 1:
+            found_deg = degrees.pop()
+            print(f"Consensus rotation from header: {found_deg}")
+            return found_deg
+        else:
+            # Multiple different rotation values found (e.g., in mvhd vs tkhd)
+            # This is unusual. Maybe prioritize tkhd? Or return an error indicator?
+            # Let's return the first one found or a common value if possible.
+            # For now, return None to indicate ambiguity or error.
+            print(f"Warning: Inconsistent rotation values found in header: {degrees}. Returning None.")
+            return None
+
+    except FileNotFoundError:
+        print(f"Error: File not found at {filename}")
+        return None
+    except Exception as e:
+        print(f"Error reading rotation from header for {filename}: {e}")
+        print(traceback.format_exc())
+        return None # Indicate error
+
+
 # Get video information using ffprobe
 def get_video_info(video_path):
-    """Get video information using ffprobe, accounting for rotation."""
+    """Get video information using ffprobe, accounting for rotation, with fallback."""
     print(f"Getting video info for: {video_path}")
-    
-    # Command to get width, height, and rotation
+
+    # Command to get width, height, and rotation using ffprobe
     info_cmd = [
-        'ffprobe', 
-        '-v', 'error', 
-        '-select_streams', 'v:0', 
-        '-show_entries', 'stream=width,height:stream_tags=rotate', 
-        '-of', 'json', 
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height:stream_tags=rotate',
+        '-of', 'json',
         video_path
     ]
-    
+
     result = subprocess.run(info_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
+    info = None
+    width = 0
+    height = 0
+    rotation = 0 # Default rotation
+
     try:
         info = json.loads(result.stdout)
+        print(f"ffprobe stream info result: {info}")
+        if 'streams' in info and info['streams']:
+            stream = info['streams'][0]
+            width = int(stream.get('width', 0))
+            height = int(stream.get('height', 0))
+
+            # Check for rotation tag from ffprobe
+            if 'tags' in stream and 'rotate' in stream['tags']:
+                try:
+                    rotation = int(stream['tags']['rotate'])
+                    print(f"Rotation found via ffprobe: {rotation}")
+                except (ValueError, TypeError):
+                    print(f"Warning: Could not parse rotation tag value from ffprobe: {stream['tags']['rotate']}")
+                    rotation = 0 # Reset to default if parsing fails
+            else:
+                 print("Rotation tag not found in ffprobe output.")
+                 rotation = 0 # Explicitly set to 0 if tag is missing
+        else:
+             print("Warning: No video streams found in ffprobe output.")
+             # Width/Height remain 0
+
     except json.JSONDecodeError:
         print(f"Error decoding ffprobe JSON output for stream info: {result.stdout.decode()}")
         print(f"ffprobe stderr: {result.stderr.decode()}")
-        return None
-    
-    print(f"Video info: {info}")
+        # Width/Height/Rotation remain 0
 
-    if 'streams' in info and info['streams']:
-        stream = info['streams'][0]
-        width = int(stream.get('width', 0))
-        height = int(stream.get('height', 0))
-        
-        # Check for rotation tag
-        rotation = 0
-        if 'tags' in stream and 'rotate' in stream['tags']:
-            try:
-                rotation = int(stream['tags']['rotate'])
-            except ValueError:
-                print(f"Warning: Could not parse rotation tag value: {stream['tags']['rotate']}")
-                rotation = 0 # Default to 0 if parsing fails
-        
-        print(f"Original dimensions: width={width}, height={height}, rotation={rotation}")
+    except Exception as e:
+         print(f"An unexpected error occurred processing ffprobe stream info: {e}")
+         # Width/Height/Rotation remain 0
 
-        # Swap width and height if rotation is 90 or 270 degrees
-        if rotation in [90, 270]:
-            print(f"Applying rotation {rotation}: Swapping width and height.")
-            width, height = height, width
-        
-        # Get duration (separate call as format info is needed)
-        duration_cmd = [
-            'ffprobe', 
-            '-v', 'error', 
-            '-show_entries', 'format=duration', 
-            '-of', 'json', 
-            video_path
-        ]
-        duration_result = subprocess.run(duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        duration = 0.0
-        try:
-            duration_info = json.loads(duration_result.stdout)
-            if 'format' in duration_info and 'duration' in duration_info['format']:
-                 # Handle potential None or invalid duration string before converting to float
-                 duration_str = duration_info['format']['duration']
-                 if duration_str is not None:
-                     try:
-                         duration = float(duration_str)
-                     except (ValueError, TypeError):
-                         print(f"Warning: Could not parse duration value: {duration_str}")
-                         duration = 0.0
+
+    # --- Fallback Rotation Check ---
+    # If ffprobe didn't provide dimensions or rotation (or failed), try reading header
+    # We need width/height *before* applying rotation swap, so we only call this if rotation is still 0
+    # And we have valid dimensions from ffprobe OR if ffprobe failed entirely
+    if rotation == 0:
+         print("Rotation is 0 after ffprobe check. Attempting header read as fallback...")
+         try:
+             # Ensure the file exists before attempting to read header
+             if os.path.exists(video_path):
+                 rotation_from_header = _get_rotation_from_header(video_path)
+                 if rotation_from_header is not None and rotation_from_header in [90, 180, 270]:
+                     rotation = rotation_from_header # Use valid rotation from header
+                     print(f"Rotation found from header: {rotation}")
+                 elif rotation_from_header == 0:
+                      print("Header reading returned 0 rotation.")
+                      rotation = 0 # Explicitly keep 0
                  else:
-                    print("Warning: Duration field is null.")
+                      print(f"Header reading returned invalid or ambiguous rotation ({rotation_from_header}). Keeping rotation 0.")
+                      rotation = 0 # Keep default if header read fails or returns invalid/ambiguous
+             else:
+                  print(f"Video path {video_path} does not exist, skipping header read fallback.")
+         except Exception as e:
+             print(f"Error during fallback rotation check: {e}")
+             rotation = 0 # Keep default on error
+
+
+    # Get duration (separate ffprobe call) - do this regardless of rotation success
+    duration = 0.0
+    duration_cmd = [
+        'ffprobe',
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'json',
+        video_path
+    ]
+    try:
+        duration_result = subprocess.run(duration_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60) # Add timeout
+        duration_info = json.loads(duration_result.stdout)
+        if 'format' in duration_info and 'duration' in duration_info['format']:
+            duration_str = duration_info['format']['duration']
+            if duration_str is not None:
+                try:
+                    duration = float(duration_str)
+                except (ValueError, TypeError):
+                    print(f"Warning: Could not parse duration value: {duration_str}")
                     duration = 0.0
             else:
-                print("Warning: Duration information not found in format.")
-        except json.JSONDecodeError:
-            print(f"Error decoding ffprobe JSON output for duration: {duration_result.stdout.decode()}")
-            print(f"ffprobe stderr: {duration_result.stderr.decode()}")
-            # Keep duration as 0.0 if decoding fails
-        
-        video_info = {
-            'width': width, # Now represents displayed width
-            'height': height, # Now represents displayed height
-            'duration': duration,
-            'is_portrait': height > width # Calculated based on displayed dimensions
-        }
-        print(f"Video info (adjusted for rotation): {video_info}")
-        return video_info
-    
-    stderr_output = result.stderr.decode()
-    print(f"Failed to get video info for: {video_path}")
-    if stderr_output:
-        print(f"ffprobe error output: {stderr_output}")
-    return None
+                print("Warning: Duration field is null.")
+                duration = 0.0
+        else:
+            print("Warning: Duration information not found in format.")
+    except json.JSONDecodeError:
+        print(f"Error decoding ffprobe JSON output for duration: {duration_result.stdout.decode()}")
+        print(f"ffprobe stderr: {duration_result.stderr.decode()}")
+    except subprocess.TimeoutExpired:
+        print("Timeout getting video duration.")
+    except Exception as e:
+        print(f"Error getting video duration: {e}")
+        # Keep duration as 0.0
+
+    # --- Final Dimension Calculation ---
+    # Check if we have valid initial dimensions before proceeding
+    if width <= 0 or height <= 0:
+         # Attempt to get width/height again if the first ffprobe call failed but duration worked
+         # This is a failsafe, but ideally the first call gets dimensions if the file is valid
+         if info is None and duration > 0:
+             print("Attempting to re-fetch dimensions as initial ffprobe failed but duration succeeded.")
+             result = subprocess.run(info_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+             try:
+                 info = json.loads(result.stdout)
+                 if 'streams' in info and info['streams']:
+                     stream = info['streams'][0]
+                     width = int(stream.get('width', 0))
+                     height = int(stream.get('height', 0))
+                     print(f"Re-fetched dimensions: width={width}, height={height}")
+                 else:
+                      print("Failed to re-fetch dimensions.")
+             except Exception as e:
+                  print(f"Error re-fetching dimensions: {e}")
+
+         # If still no valid dimensions, return None
+         if width <= 0 or height <= 0:
+              print(f"Error: Could not determine valid dimensions for: {video_path}. width={width}, height={height}")
+              return None
+
+
+    print(f"Initial dimensions: width={width}, height={height}. Final determined rotation: {rotation}")
+
+    # Store original dimensions before swap
+    original_width, original_height = width, height
+
+    # Swap width and height IF rotation requires it
+    if rotation in [90, 270]:
+        print(f"Applying rotation {rotation}: Swapping width and height.")
+        display_width, display_height = height, width
+    else:
+        display_width, display_height = width, height
+
+
+    video_info = {
+        'width': display_width, # Represents displayed width
+        'height': display_height, # Represents displayed height
+        'duration': duration,
+        'is_portrait': display_height > display_width, # Calculated based on displayed dimensions
+        'rotation': rotation, # Store the detected rotation
+        'original_width': original_width, # Store original for reference if needed
+        'original_height': original_height, # Store original for reference if needed
+    }
+    print(f"Final video info (adjusted for rotation): {video_info}")
+    return video_info
 
 # Extract a random clip from a video
 def extract_random_clip(video_path, output_path, clip_duration):
