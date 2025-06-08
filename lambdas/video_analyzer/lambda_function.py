@@ -6,9 +6,9 @@ import json
 import requests
 from pinecone import Pinecone, ServerlessSpec
 import tempfile
-import numpy as np
-from PIL import Image
-import io
+# import numpy as np
+# from PIL import Image
+# import io
 
 # --- Environment Variables ---
 PINECONE_API_SECRET_ARN = os.environ['PINECONE_API_SECRET_ARN']

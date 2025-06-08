@@ -56,51 +56,51 @@ class ApiStack(Stack):
         output_bucket = s3.Bucket.from_bucket_name(self, 'MontageOutputBucket', f'{self.account}-montage-uploads')
         
         # Layer for the video analyzer
-        video_analyzer_layer = _lambda.LayerVersion(self, 'VideoAnalyzerLayer',
-            code=_lambda.Code.from_asset('layers/video_analyzer/',
-                bundling=BundlingOptions(
-                    image=_lambda.Runtime.PYTHON_3_11.bundling_image,
-                    command=[
-                        "bash", "-c",
-                        "pip install -r requirements.txt -t /asset-output/python && cp -au . /asset-output/python"
-                    ]
-                )
-            ),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
-            description='Layer with dependencies for video analysis lambda'
-        )
+        # video_analyzer_layer = _lambda.LayerVersion(self, 'VideoAnalyzerLayer',
+        #     code=_lambda.Code.from_asset('layers/video_analyzer/',
+        #         bundling=BundlingOptions(
+        #             image=_lambda.Runtime.PYTHON_3_11.bundling_image,
+        #             command=[
+        #                 "bash", "-c",
+        #                 "pip install -r requirements.txt -t /asset-output/python && cp -au . /asset-output/python"
+        #             ]
+        #         )
+        #     ),
+        #     compatible_runtimes=[_lambda.Runtime.PYTHON_3_11],
+        #     description='Layer with dependencies for video analysis lambda'
+        # )
 
         # Add an existing layer from an ARN (e.g., for OpenCV)
-        opencv_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, 'OpenCVLayer',
-            layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-python38-opencv-python-headless:11'
-        )
+        # opencv_layer = _lambda.LayerVersion.from_layer_version_arn(
+        #     self, 'OpenCVLayer',
+        #     layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-python38-opencv-python-headless:11'
+        # )
 
-        requests_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, 'RequestsLayer',
-            layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p38-requests:18'
-        )
+        # requests_layer = _lambda.LayerVersion.from_layer_version_arn(
+        #     self, 'RequestsLayer',
+        #     layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p38-requests:18'
+        # )
 
-        pillow_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, 'PillowLayer',
-            layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p38-pillow:1'
-        )
+        # pillow_layer = _lambda.LayerVersion.from_layer_version_arn(
+        #     self, 'PillowLayer',
+        #     layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p38-pillow:1'
+        # )
 
-        numpy_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, 'NumpyLayer',
-            layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p38-numpy:13'
-        )
+        # numpy_layer = _lambda.LayerVersion.from_layer_version_arn(
+        #     self, 'NumpyLayer',
+        #     layer_version_arn='arn:aws:lambda:us-east-1:770693421928:layer:Klayers-p38-numpy:13'
+        # )
 
-        pinecone_layer = _lambda.LayerVersion.from_layer_version_arn(
-            self, 'PineconeLayer',
-            layer_version_arn='arn:aws:lambda:us-east-1:704250834382:layer:pineconeLayer:1'
-        )
+        # pinecone_layer = _lambda.LayerVersion.from_layer_version_arn(
+        #     self, 'PineconeLayer',
+        #     layer_version_arn='arn:aws:lambda:us-east-1:704250834382:layer:pineconeLayer:1'
+        # )
 
         # Lambda for video analysis
-        lambda_video_analyzer = _lambda.Function(self, 'LambdaVideoAnalyzer',
-            runtime=_lambda.Runtime.PYTHON_3_8,
-            handler='lambda_function.lambda_handler',
-            code=_lambda.Code.from_asset('lambdas/video_analyzer/'),
+        lambda_video_analyzer = _lambda.DockerImageFunction(self, 'LambdaVideoAnalyzer',
+            # runtime=_lambda.Runtime.PYTHON_3_8,
+            # handler='lambda_function.lambda_handler',
+            code=_lambda.DockerImageCode.from_image_asset('lambdas/video_analyzer/'),
             environment={
                 'AI_KEYS_SECRET_ARN': ai_keys_secret.secret_arn,
                 'PINECONE_API_SECRET_ARN': pinecone_api_secret.secret_arn,
@@ -109,14 +109,14 @@ class ApiStack(Stack):
             },
             memory_size=1024,
             timeout=Duration.minutes(5),
-            layers=[
-                video_analyzer_layer, 
-                opencv_layer, 
-                requests_layer, 
-                pillow_layer, 
-                numpy_layer, 
-                pinecone_layer
-            ]
+            # layers=[
+            #     # video_analyzer_layer, 
+            #     opencv_layer, 
+            #     requests_layer, 
+            #     pillow_layer, 
+            #     numpy_layer, 
+            #     pinecone_layer
+            # ]
         )
         ai_keys_secret.grant_read(lambda_video_analyzer)
         pinecone_api_secret.grant_read(lambda_video_analyzer)

@@ -1,0 +1,3 @@
+pinecone
+opencv-python-headless
+requests
