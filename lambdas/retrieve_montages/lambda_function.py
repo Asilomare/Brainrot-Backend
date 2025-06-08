@@ -16,11 +16,11 @@ def get_montage_requests(event, context):
     try:
         # Check if this is a GET request for a specific request
         path_parameters = event.get('pathParameters', {})
-        sk = path_parameters.get('id') if path_parameters else None
+        request_id = path_parameters.get('id') if path_parameters else None
         
-        if sk:
+        if request_id:
             # Get a specific request by ID
-            response = requests_table.get_item(Key={'pk': 'montage#requests', 'ts': sk})
+            response = requests_table.get_item(Key={'pk': 'montage#requests', 'requestId': request_id})
             
             if 'Item' not in response:
                 return {
@@ -30,7 +30,7 @@ def get_montage_requests(event, context):
                         'Access-Control-Allow-Origin': '*'
                     },
                     'body': json.dumps({
-                        'message': f'Montage request with ID {sk} not found'
+                        'message': f'Montage request with ID {request_id} not found'
                     })
                 }
             
@@ -50,17 +50,18 @@ def get_montage_requests(event, context):
             status_filter = query_params.get('status')
             
             # Query by partition key and sort key (descending order)
-            query_params = {
+            query_args = {
+                'IndexName': 'by-creation-date',
                 'KeyConditionExpression': Key('pk').eq('montage#requests'),
                 'ScanIndexForward': False  # Sort in descending order (most recent first)
             }
             
             # Add status filter if provided
             if status_filter:
-                query_params['FilterExpression'] = Key('status').eq(status_filter)
+                query_args['FilterExpression'] = Key('status').eq(status_filter)
             
             # Execute the query
-            response = requests_table.query(**query_params)
+            response = requests_table.query(**query_args)
             
             requests = response.get('Items', [])
             
@@ -98,6 +99,7 @@ def get_montage_by_status(event, context):
         
         # Query by partition key and sort key (descending order)
         query_params = {
+            'IndexName': 'by-creation-date',
             'KeyConditionExpression': Key('pk').eq('montage#requests'),
             'FilterExpression': Key('status').eq(status),
             'ScanIndexForward': False  # Sort in descending order (most recent first)

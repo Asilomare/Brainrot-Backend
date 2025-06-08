@@ -23,10 +23,16 @@ class ApiStack(Stack):
                 type=dynamodb.AttributeType.STRING
             ),
             sort_key=dynamodb.Attribute(
-                name='ts',
+                name='requestId',
                 type=dynamodb.AttributeType.STRING
             ),
             # billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
+        )
+
+        table.add_global_secondary_index(
+            index_name='by-creation-date',
+            partition_key=dynamodb.Attribute(name='pk', type=dynamodb.AttributeType.STRING),
+            sort_key=dynamodb.Attribute(name='createdAt', type=dynamodb.AttributeType.STRING),
         )
 
         video_bucket = s3.Bucket.from_bucket_name(self, 'MontageVideosBucket', f'{self.account}-video-uploads')
@@ -80,3 +86,6 @@ class ApiStack(Stack):
 
         montage_resource.add_method('POST', apigw.LambdaIntegration(lambda_video_compiler))
         montage_resource.add_method('GET', apigw.LambdaIntegration(lambda_requests_retriever))
+        
+        montage_item_resource = montage_resource.add_resource('{id}')
+        montage_item_resource.add_method('GET', apigw.LambdaIntegration(lambda_requests_retriever))

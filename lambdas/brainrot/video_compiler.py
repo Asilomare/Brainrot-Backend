@@ -835,13 +835,11 @@ def add_audio_to_video(video_path, audio_path, output_path, config):
     return output_path
 
 # Update request status in DynamoDB
-def update_request_status(request_id, status, result=None, video_folder=None):
+def update_request_status(request_id, status, result=None):
     """Update the status of a montage request in DynamoDB."""
-    print(f"Updating request status: {request_id} to {status}")
+    print(f"Updating request {request_id} to status {status}")
     update_expression = "SET #status = :status, updatedAt = :updatedAt"
-    expression_attribute_names = {
-        '#status': 'status'
-    }
+    expression_attribute_names = {'#status': 'status'}
     expression_attribute_values = {
         ':status': status,
         ':updatedAt': datetime.now().isoformat()
@@ -851,13 +849,10 @@ def update_request_status(request_id, status, result=None, video_folder=None):
         update_expression += ", #result = :result"
         expression_attribute_names['#result'] = 'result'
         expression_attribute_values[':result'] = result
-    if video_folder:
-        update_expression += ", #videoFolder = :videoFolder"
-        expression_attribute_names['#videoFolder'] = 'videoFolder'
-        expression_attribute_values[':videoFolder'] = video_folder
+
     try:
         requests_table.update_item(
-            Key={'pk': 'montage#requests', 'ts': datetime.now().isoformat() + '#' + request_id},
+            Key={'pk': 'montage#requests', 'requestId': request_id},
             UpdateExpression=update_expression,
             ExpressionAttributeNames=expression_attribute_names,
             ExpressionAttributeValues=expression_attribute_values
@@ -1098,7 +1093,7 @@ def create_video_compilation(event, context):
         }
         
         # Update request status to completed
-        update_request_status(request_id, 'COMPLETED', result, video_folder)
+        update_request_status(request_id, 'COMPLETED', result)
         
         print(f"Video compilation created successfully: {s3_url}")
         return {
@@ -1132,16 +1127,37 @@ def create_video_compilation(event, context):
 def lambda_handler(event, context):
     """Lambda handler for the video compiler"""
     print(f"Lambda handler invoked with event: {event}")
-    # If the event has a requestId, assume it's a compilation request
+    request_id = str(uuid.uuid4())[:8]
+
     try:
-        uuid_id = str(uuid.uuid4())[:8]
-        print(f"Generated request ID: {uuid_id}")
-        body = json.loads(event['body'])
-        body['requestId'] = uuid_id
+        body = json.loads(event.get('body', '{}'))
+        body['requestId'] = request_id
+
+        ts = datetime.now().isoformat()
+        initial_item = {
+            'pk': 'montage#requests',
+            'requestId': request_id,
+            'id': request_id,
+            'status': 'PENDING',
+            'createdAt': ts,
+            'updatedAt': ts,
+            'videoFolder': body.get('videoFolder'),
+            'musicFolder': body.get('musicFolder'),
+            'numClips': body.get('numClips'),
+            'videoLength': body.get('videoLength'),
+            'clipDuration': body.get('clipDuration'),
+            'isMusicIncluded': body.get('isMusicIncluded'),
+        }
+        requests_table.put_item(Item=initial_item)
+        print(f"Created montage request {request_id}")
+
         return create_video_compilation(body, context)
-    
+
     except Exception as e:
-        print(f"Error creating video compilation: {e}")
+        print(f"Error during initial request processing or compilation: {str(e)}")
+        # If we are here, the request might have been created but compilation failed.
+        # Update its status to FAILED.
+        update_request_status(request_id, 'FAILED', result={'error': f'Error creating video compilation: {str(e)}'})
         return {
             'statusCode': 500,
             'headers': {
