@@ -3,6 +3,17 @@ import boto3
 import os
 from datetime import datetime
 from boto3.dynamodb.conditions import Key
+from decimal import Decimal
+
+# Custom JSON encoder to handle Decimal types
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Decimal):
+            if o % 1 == 0:
+                return int(o)
+            else:
+                return float(o)
+        return super(DecimalEncoder, self).default(o)
 
 # Initialize DynamoDB client
 dynamodb = boto3.resource('dynamodb')
@@ -42,7 +53,7 @@ def get_montage_requests(event, context):
                 },
                 'body': json.dumps({
                     'request': response['Item']
-                })
+                }, cls=DecimalEncoder)
             }
         else:
             # Query parameters for filtering
@@ -73,7 +84,7 @@ def get_montage_requests(event, context):
                 },
                 'body': json.dumps({
                     'requests': requests
-                })
+                }, cls=DecimalEncoder)
             }
     
     except Exception as e:
@@ -118,7 +129,7 @@ def get_montage_by_status(event, context):
             },
             'body': json.dumps({
                 'requests': requests
-            })
+            }, cls=DecimalEncoder)
         }
     
     except Exception as e:
@@ -131,7 +142,7 @@ def get_montage_by_status(event, context):
             },
             'body': json.dumps({
                 'message': f'Error getting montage requests by status: {str(e)}'
-            })
+            }, cls=DecimalEncoder)
         }
 
 def lambda_handler(event, context):
