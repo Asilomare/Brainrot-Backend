@@ -1,5 +1,0 @@
-requests
-pinecone-client
-opencv-python-headless
-numpy
-Pillow
