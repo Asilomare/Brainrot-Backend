@@ -115,8 +115,8 @@ class ApiStack(Stack):
             environment={
                 'AI_KEYS_SECRET_ARN': ai_keys_secret.secret_arn,
                 'PINECONE_API_SECRET_ARN': pinecone_api_secret.secret_arn,
-                'PINECONE_ENVIRONMENT': 'us-east-1',
-                'PINECONE_INDEX_NAME': 'video-search',
+                'PINECONE_ENVIRONMENT': environment.get('PINECONE_ENVIRONMENT'),
+                'PINECONE_INDEX_NAME': environment.get('PINECONE_INDEX_NAME'),
             },
             memory_size=1024,
             timeout=Duration.minutes(5),
@@ -147,7 +147,11 @@ class ApiStack(Stack):
                 'MONTAGE_REQUESTS_TABLE': table.table_name,
                 'MONTAGE_VIDEOS_BUCKET': video_bucket.bucket_name,
                 'MONTAGE_MUSIC_BUCKET': music_bucket.bucket_name,
-                'MONTAGE_OUTPUT_BUCKET': output_bucket.bucket_name
+                'MONTAGE_OUTPUT_BUCKET': output_bucket.bucket_name,
+                'AI_KEYS_SECRET_ARN': ai_keys_secret.secret_arn,
+                'PINECONE_API_SECRET_ARN': pinecone_api_secret.secret_arn,
+                'PINECONE_ENVIRONMENT': environment.get('PINECONE_ENVIRONMENT'),
+                'PINECONE_INDEX_NAME': environment.get('PINECONE_INDEX_NAME'),
             },
             memory_size=512,
             timeout=Duration.minutes(3)
@@ -156,6 +160,8 @@ class ApiStack(Stack):
         video_bucket.grant_read_write(lambda_video_compiler)
         music_bucket.grant_read_write(lambda_video_compiler)
         output_bucket.grant_read_write(lambda_video_compiler)
+        ai_keys_secret.grant_read(lambda_video_compiler)
+        pinecone_api_secret.grant_read(lambda_video_compiler)
 
         lambda_requests_retriever = _lambda.Function(self, 'LambdaRequestsRetriever',
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -191,3 +197,7 @@ class ApiStack(Stack):
         
         montage_item_resource = montage_resource.add_resource('{id}')
         montage_item_resource.add_method('GET', apigw.LambdaIntegration(lambda_requests_retriever))
+
+        # New resource for prompt-based generation
+        prompt_generation_resource = montage_resource.add_resource('generate-from-prompt')
+        prompt_generation_resource.add_method('POST', apigw.LambdaIntegration(lambda_video_compiler))

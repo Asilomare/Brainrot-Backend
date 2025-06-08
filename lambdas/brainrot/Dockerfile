@@ -1,18 +1,12 @@
 FROM public.ecr.aws/lambda/python:3.11
 
-# Copy function code
-COPY video_compiler.py ${LAMBDA_TASK_ROOT}
-COPY config.json ${LAMBDA_TASK_ROOT}
+# Copy function code and config
+COPY *.py /var/task/
+COPY config.json /var/task/
+COPY requirements.txt /var/task/
 
-# Install ffmpeg and ffprobe
-COPY ffmpeg-7.0.2-amd64-static/ffmpeg /usr/local/bin/
-COPY ffmpeg-7.0.2-amd64-static/ffprobe /usr/local/bin/
-
-RUN chmod 777 /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
-# Create requirements.txt if it doesn't exist
-RUN touch ${LAMBDA_TASK_ROOT}/requirements.txt
 # Install dependencies
-RUN pip3 install -r ${LAMBDA_TASK_ROOT}/requirements.txt --target "${LAMBDA_TASK_ROOT}"
+RUN python3.11 -m pip install -r requirements.txt -t /var/task
 
 # Set the CMD to your handler
-CMD [ "video_compiler.lambda_handler" ]
+CMD ["video_compiler.lambda_handler"]

@@ -20,6 +20,8 @@ import traceback
 from os import environ
 import math
 import struct
+from openai import OpenAI
+from pinecone import Pinecone
 
 # Initialize S3 client
 s3_client = boto3.client('s3')
@@ -27,6 +29,81 @@ s3_client = boto3.client('s3')
 # Initialize DynamoDB client
 dynamodb = boto3.resource('dynamodb')
 requests_table = dynamodb.Table(environ['MONTAGE_REQUESTS_TABLE'])
+
+# --- Environment Variables ---
+PINECONE_API_SECRET_ARN = os.environ.get('PINECONE_API_SECRET_ARN')
+AI_KEYS_SECRET_ARN = os.environ.get('AI_KEYS_SECRET_ARN')
+PINECONE_INDEX_NAME = os.environ.get('PINECONE_INDEX_NAME')
+EMBEDDING_MODEL = "text-embedding-ada-002"
+
+# --- Clients (initialized lazily) ---
+pinecone_index = None
+openai_client = None
+
+# --- Helper to get secrets ---
+def get_secret(secret_arn):
+    """Retrieve a secret from AWS Secrets Manager."""
+    if not secret_arn:
+        raise ValueError("Secret ARN is not configured.")
+    print(f"Retrieving secret from ARN: {secret_arn}")
+    secrets_manager = boto3.client('secretsmanager')
+    response = secrets_manager.get_secret_value(SecretId=secret_arn)
+    if 'SecretString' in response:
+        return json.loads(response['SecretString'])
+    return json.loads(response['SecretBinary'].decode('utf-8'))
+
+def init_ai_clients():
+    """Initializes Pinecone and OpenAI clients."""
+    global pinecone_index, openai_client
+    if pinecone_index is None:
+        pinecone_secret = get_secret(PINECONE_API_SECRET_ARN)
+        pinecone_api_key = pinecone_secret.get('PINECONE_API_KEY')
+        pc = Pinecone(api_key=pinecone_api_key)
+        pinecone_index = pc.Index(PINECONE_INDEX_NAME)
+        print("Pinecone client initialized.")
+
+    if openai_client is None:
+        ai_keys_secret = get_secret(AI_KEYS_SECRET_ARN)
+        openai_api_key = ai_keys_secret.get('OPENAI_API_KEY')
+        openai_client = OpenAI(api_key=openai_api_key)
+        print("OpenAI client initialized.")
+
+def get_text_embedding(text):
+    """Get a text embedding using the OpenAI API."""
+    init_ai_clients()
+    print(f"Requesting embedding from OpenAI's {EMBEDDING_MODEL}...")
+    response = openai_client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    embedding = response.data[0].embedding
+    print("Received embedding from OpenAI.")
+    return embedding
+
+def get_videos_from_prompt(prompt, num_clips):
+    """Query Pinecone to get the most relevant video clips for a prompt."""
+    print(f"Getting video clips for prompt: '{prompt}'")
+    prompt_embedding = get_text_embedding(prompt)
+
+    # Query Pinecone, get more than needed to allow for deduplication
+    query_response = pinecone_index.query(
+        vector=prompt_embedding,
+        top_k=num_clips * 5,  # Fetch more to ensure variety
+        include_metadata=True
+    )
+
+    # Deduplicate based on s3_key to get varied videos
+    unique_s3_keys = {}
+    for match in query_response['matches']:
+        s3_key = match['metadata']['s3_key']
+        if s3_key not in unique_s3_keys:
+            unique_s3_keys[s3_key] = match
+
+    # Get the top N unique video keys
+    selected_videos = list(unique_s3_keys.keys())[:num_clips]
+
+    if not selected_videos:
+        raise ValueError(f"Could not find any relevant videos for the prompt: '{prompt}'")
+
+    print(f"Found {len(selected_videos)} relevant videos from prompt.")
+    return selected_videos
 
 # Load configuration
 def load_config():
@@ -932,7 +1009,8 @@ def create_video_compilation(event, context):
     """Create a video compilation based on the request parameters."""
     print(f"Starting video compilation with event: {event}")
     request_id = event['requestId']
-    video_folder = event['videoFolder']
+    prompt = event.get('prompt')
+    video_folder = event.get('videoFolder') # Kept for legacy requests
     music_folder = event['musicFolder']
     num_clips = event['numClips']
     video_length = event['videoLength']
@@ -949,14 +1027,16 @@ def create_video_compilation(event, context):
             'body': json.dumps({'message': 'Missing requestId'})
         }
     
-    if not video_folder:
-        print("Error: Missing videoFolder")
-        update_request_status(request_id, 'FAILED', {'error': 'Missing videoFolder'})
+    # Check for prompt or video folder
+    if not prompt and not video_folder:
+        error_message = 'Request must include either a "prompt" or a "videoFolder".'
+        print(f"Error: {error_message}")
+        update_request_status(request_id, 'FAILED', {'error': error_message})
         return {
             'statusCode': 400,
-            'body': json.dumps({'message': 'Missing videoFolder'})
+            'body': json.dumps({'message': error_message})
         }
-    
+
     # Update status to PROCESSING before starting
     update_request_status(request_id, 'PROCESSING')
     
@@ -973,13 +1053,19 @@ def create_video_compilation(event, context):
         #     num_clips = max(1, int(video_length / clip_duration))
         #     print(f"Calculated number of clips: {num_clips} based on video_length: {video_length} and clip_duration: {clip_duration}")
         
-        # Get videos from the specified folder
+        # Get video keys based on prompt or folder
+        video_keys = []
         try:
-            video_keys = get_videos_from_folder(
-                video_bucket, 
-                video_folder, 
-                num_clips
-            )
+            if prompt:
+                # New: Get videos based on AI prompt
+                video_keys = get_videos_from_prompt(prompt, num_clips)
+            elif video_folder:
+                # Legacy: Get videos from a specific folder
+                video_keys = get_videos_from_folder(
+                    video_bucket, 
+                    video_folder, 
+                    num_clips
+                )
         except Exception as e:
             error_message = f"Error retrieving videos: {str(e)}"
             print(error_message)
@@ -1141,6 +1227,7 @@ def lambda_handler(event, context):
             'status': 'PENDING',
             'createdAt': ts,
             'updatedAt': ts,
+            'prompt': body.get('prompt'),
             'videoFolder': body.get('videoFolder'),
             'musicFolder': body.get('musicFolder'),
             'numClips': body.get('numClips'),
