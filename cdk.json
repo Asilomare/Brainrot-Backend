@@ -15,6 +15,10 @@
     ]
   },
   "context": {
+    "env": {
+      "AI_KEYS_SECRET_ARN": "arn:aws:secretsmanager:us-east-1:704250834382:secret:prod/brainrot/ai-IW1Bkf",
+      "PINECONE_API_SECRET_ARN": "arn:aws:secretsmanager:us-east-1:704250834382:secret:prod/brainrot/pinecone-dmON02"
+    },
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/core:target-partitions": [

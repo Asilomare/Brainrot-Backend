@@ -3,10 +3,12 @@ from aws_cdk import (
     Stack,
     aws_s3 as s3,
     Duration,
+    aws_lambda_event_sources as lambda_event_sources,
     # aws_sqs as sqs,
     aws_lambda as _lambda,
     aws_apigateway as apigw,
     aws_dynamodb as dynamodb,
+    aws_secretsmanager as secretsmanager,
 )
 from constructs import Construct
 
@@ -14,6 +16,18 @@ class ApiStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        environment = self.node.try_get_context('env')
+        ai_keys_secret_arn = environment.get('AI_KEYS_SECRET_ARN')
+
+        ai_keys_secret = secretsmanager.Secret.from_secret_complete_arn(self, 'AiKeysSecret', 
+            secret_complete_arn=ai_keys_secret_arn
+        )
+
+        pinecone_api_secret_arn = environment.get('PINECONE_API_SECRET_ARN')
+        pinecone_api_secret = secretsmanager.Secret.from_secret_complete_arn(self, 'PineconeApiSecret',
+            secret_complete_arn=pinecone_api_secret_arn
+        )
 
         table = dynamodb.Table(
             self,
@@ -38,6 +52,29 @@ class ApiStack(Stack):
         video_bucket = s3.Bucket.from_bucket_name(self, 'MontageVideosBucket', f'{self.account}-video-uploads')
         music_bucket = s3.Bucket.from_bucket_name(self, 'MontageMusicBucket',  f'{self.account}-music-uploads')
         output_bucket = s3.Bucket.from_bucket_name(self, 'MontageOutputBucket', f'{self.account}-montage-uploads')
+        
+        # Lambda for video analysis
+        lambda_video_analyzer = _lambda.DockerImageFunction(self, 'LambdaVideoAnalyzer',
+            code=_lambda.DockerImageCode.from_image_asset('lambdas/video_analyzer/'),
+            environment={
+                'AI_KEYS_SECRET_ARN': ai_keys_secret.secret_arn,
+                'PINECONE_API_SECRET_ARN': pinecone_api_secret.secret_arn,
+                'PINECONE_ENVIRONMENT': 'us-east-1',
+                'PINECONE_INDEX_NAME': 'video-search',
+            },
+            memory_size=1024, # Needs more memory for video processing
+            timeout=Duration.minutes(5) # And more time
+        )
+        ai_keys_secret.grant_read(lambda_video_analyzer)
+        pinecone_api_secret.grant_read(lambda_video_analyzer)
+        video_bucket.grant_read(lambda_video_analyzer)
+
+        lambda_video_analyzer.add_event_source(
+            lambda_event_sources.S3EventSource(video_bucket,
+                events=[s3.EventType.OBJECT_CREATED]
+            )
+        )
+
         #    Lambda processor
         lambda_video_compiler = _lambda.DockerImageFunction(self, 'LambdaVideoCompiler',
             code=_lambda.DockerImageCode.from_image_asset('lambdas/brainrot/'),
