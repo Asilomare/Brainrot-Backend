@@ -153,8 +153,8 @@ class ApiStack(Stack):
                 'PINECONE_ENVIRONMENT': environment.get('PINECONE_ENVIRONMENT'),
                 'PINECONE_INDEX_NAME': environment.get('PINECONE_INDEX_NAME'),
             },
-            memory_size=512,
-            timeout=Duration.minutes(3)
+            memory_size=2048,
+            timeout=Duration.minutes(5)
         )
         table.grant_read_write_data(lambda_video_compiler)
         video_bucket.grant_read_write(lambda_video_compiler)

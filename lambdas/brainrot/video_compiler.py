@@ -370,8 +370,11 @@ def _get_rotation_from_header(filename):
                          # d = float(matrix[4]) / (1 << 16) # cos(theta)
 
                          # Calculate angle from sin (b) or cos (a)
-                         angle_rad_from_sin = math.asin(b)
-                         angle_rad_from_cos = math.acos(a)
+                         # Clamp values to prevent math domain error with asin/acos
+                         a_clamped = max(min(a, 1.0), -1.0)
+                         b_clamped = max(min(b, 1.0), -1.0)
+                         angle_rad_from_sin = math.asin(b_clamped)
+                         angle_rad_from_cos = math.acos(a_clamped)
 
                          # Basic check: sin^2 + cos^2 = 1
                          if not math.isclose(a**2 + b**2, 1.0, abs_tol=0.01):
