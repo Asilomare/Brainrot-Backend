@@ -4,7 +4,7 @@ from aws_cdk import (
     aws_s3 as s3,
     Duration,
     aws_lambda_event_sources as lambda_event_sources,
-    # aws_sqs as sqs,
+    aws_sqs as sqs,
     aws_lambda as _lambda,
     aws_apigateway as apigw,
     aws_dynamodb as dynamodb,
@@ -54,7 +54,18 @@ class ApiStack(Stack):
         video_bucket = s3.Bucket.from_bucket_name(self, 'MontageVideosBucket', f'{self.account}-video-uploads')
         music_bucket = s3.Bucket.from_bucket_name(self, 'MontageMusicBucket',  f'{self.account}-music-uploads')
         output_bucket = s3.Bucket.from_bucket_name(self, 'MontageOutputBucket', f'{self.account}-montage-uploads')
+
+        queue = sqs.Queue(self, 'InboundQueue',
+            visibility_timeout=Duration.hours(12),
+            retention_period=Duration.days(4),
+        )
+
+        video_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED, 
+            s3n.SqsDestination(queue)
+        )
         
+
         # Layer for the video analyzer
         # video_analyzer_layer = _lambda.LayerVersion(self, 'VideoAnalyzerLayer',
         #     code=_lambda.Code.from_asset('layers/video_analyzer/',
@@ -122,10 +133,12 @@ class ApiStack(Stack):
         pinecone_api_secret.grant_read(lambda_video_analyzer)
         video_bucket.grant_read(lambda_video_analyzer)
 
-        video_bucket.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(lambda_video_analyzer),
-        )
+        lambda_video_analyzer.add_event_source(lambda_event_sources.SqsEventSource(queue,
+            # throttle events
+            batch_size=1,
+            max_concurrency=2,
+            max_batching_window=Duration.seconds(10)
+        ))
 
         #    Lambda processor
         lambda_video_compiler = _lambda.DockerImageFunction(self, 'LambdaVideoCompiler',

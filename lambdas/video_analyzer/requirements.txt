@@ -1,3 +1,5 @@
 pinecone
 opencv-python-headless
 requests
+boto3
+openai

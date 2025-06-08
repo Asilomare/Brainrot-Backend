@@ -84,4 +84,4 @@ ENV DNNL_DEFAULT_FPMATH_MODE=BF16
 ENV LRU_CACHE_CAPACITY=1024
 
 ENTRYPOINT [ "/usr/local/bin/python", "-m", "awslambdaric" ]
-CMD [ "app.lambda_handler" ]
+CMD [ "lambda_function.lambda_handler" ]
