@@ -9,6 +9,7 @@ from aws_cdk import (
     aws_apigateway as apigw,
     aws_dynamodb as dynamodb,
     aws_secretsmanager as secretsmanager,
+    aws_s3_notifications as s3n,    
 )
 from constructs import Construct
 
@@ -69,10 +70,9 @@ class ApiStack(Stack):
         pinecone_api_secret.grant_read(lambda_video_analyzer)
         video_bucket.grant_read(lambda_video_analyzer)
 
-        lambda_video_analyzer.add_event_source(
-            lambda_event_sources.S3EventSource(video_bucket,
-                events=[s3.EventType.OBJECT_CREATED]
-            )
+        video_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(lambda_video_analyzer),
         )
 
         #    Lambda processor
