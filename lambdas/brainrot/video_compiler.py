@@ -807,49 +807,47 @@ def resize_video(input_path, output_path, target_resolution):
         print(f"Error: Output file {output_path} not found after processing.")
         return None
 
-# Concatenate videos without transitions
+# Concatenate videos using the concat filter for robust re-encoding
 def concatenate_videos(clip_paths, output_path):
-    """Concatenate videos without transitions."""
-    print(f"Concatenating {len(clip_paths)} videos to {output_path}")
-    if len(clip_paths) < 1:
+    """Concatenate videos using the ffmpeg concat filter to handle potentially incompatible stream formats."""
+    print(f"Concatenating {len(clip_paths)} videos to {output_path} with re-encoding.")
+    if not clip_paths:
         print("Error: No clips to concatenate")
         return None
     
     if len(clip_paths) == 1:
         # If only one clip, just copy it
-        print("Only one clip, copying directly")
+        print("Only one clip, copying directly.")
         shutil.copy(clip_paths[0], output_path)
         return output_path
     
-    # Create a temporary file for the concat list
-    concat_file = tempfile.NamedTemporaryFile(delete=False, suffix='.txt')
-    concat_path = concat_file.name
-    concat_file.close()
+    # Prepare inputs for ffmpeg command
+    inputs = []
+    for clip_path in clip_paths:
+        inputs.extend(['-i', clip_path])
+
+    # Prepare the filter_complex string to concatenate video streams
+    filter_inputs = "".join([f'[{i}:v:0]' for i in range(len(clip_paths))])
+    # a=0 because audio is added separately later
+    filter_complex = f"{filter_inputs}concat=n={len(clip_paths)}:v=1:a=0[v]"
     
-    # Write the concat file
-    with open(concat_path, 'w') as f:
-        for clip_path in clip_paths:
-            print(clip_path)
-            # filename = os.path.basename(clip_path)
-            f.write(f"file '{clip_path}'\n")
-    
-    print(f"Created concat file at {concat_path}")
-    
-    # Concatenate videos using ffmpeg
+    # Concatenate videos using ffmpeg's concat filter
     cmd = [
         'ffmpeg',
         '-y',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', concat_path,
-        '-c', 'copy',
+        *inputs,
+        '-filter_complex', filter_complex,
+        '-map', '[v]',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-r', '30',
+        '-preset', 'medium',
+        '-crf', '23',
         output_path
     ]
     
+    print("Executing ffmpeg concat filter...")
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
-    # Clean up
-    os.unlink(concat_path)
 
     if result.returncode != 0 or not os.path.exists(output_path):
         stderr = result.stderr.decode('utf-8')
