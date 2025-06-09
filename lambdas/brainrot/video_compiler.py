@@ -20,8 +20,20 @@ import traceback
 from os import environ
 import math
 import struct
+from decimal import Decimal
 from openai import OpenAI
 from pinecone import Pinecone
+
+# Custom JSON encoder for handling Decimal types from DynamoDB.
+class DecimalEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle Decimal types from DynamoDB."""
+    def default(self, o):
+        if isinstance(o, Decimal):
+            if o % 1 == 0:
+                return int(o)
+            else:
+                return float(o)
+        return super(DecimalEncoder, self).default(o)
 
 # Initialize S3 client
 s3_client = boto3.client('s3')
@@ -1013,7 +1025,7 @@ def create_video_compilation(event, context):
     prompt = event.get('prompt')
     video_folder = event.get('videoFolder') # Kept for legacy requests
     music_folder = event['musicFolder']
-    num_clips = event['numClips']
+    num_clips = int(event['numClips'])
     video_length = event['videoLength']
     clip_duration = event['clipDuration']
     is_music_included = event['isMusicIncluded']
@@ -1025,7 +1037,7 @@ def create_video_compilation(event, context):
         print("Error: Missing requestId")
         return {
             'statusCode': 400,
-            'body': json.dumps({'message': 'Missing requestId'})
+            'body': json.dumps({'message': 'Missing requestId'}, cls=DecimalEncoder)
         }
     
     # Check for prompt or video folder
@@ -1035,7 +1047,7 @@ def create_video_compilation(event, context):
         update_request_status(request_id, 'FAILED', {'error': error_message})
         return {
             'statusCode': 400,
-            'body': json.dumps({'message': error_message})
+            'body': json.dumps({'message': error_message}, cls=DecimalEncoder)
         }
 
     # Update status to PROCESSING before starting
@@ -1073,7 +1085,7 @@ def create_video_compilation(event, context):
             update_request_status(request_id, 'FAILED', {'error': error_message})
             return {
                 'statusCode': 500,
-                'body': json.dumps({'message': error_message})
+                'body': json.dumps({'message': error_message}, cls=DecimalEncoder)
             }
 
         # Extract clips from videos
@@ -1189,7 +1201,7 @@ def create_video_compilation(event, context):
                 'message': 'Video compilation completed successfully',
                 'requestId': request_id,
                 'video': result
-            }),
+            }, cls=DecimalEncoder),
             'headers': {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
@@ -1203,7 +1215,7 @@ def create_video_compilation(event, context):
         update_request_status(request_id, 'FAILED', {'error': error_message})
         return {
             'statusCode': 500,
-            'body': json.dumps({'message': error_message})
+            'body': json.dumps({'message': error_message}, cls=DecimalEncoder)
         }
     
     finally:
@@ -1231,11 +1243,19 @@ def lambda_handler(event, context):
             'prompt': body.get('prompt'),
             'videoFolder': body.get('videoFolder'),
             'musicFolder': body.get('musicFolder'),
-            'numClips': body.get('numClips'),
-            'videoLength': body.get('videoLength'),
-            'clipDuration': body.get('clipDuration'),
             'isMusicIncluded': body.get('isMusicIncluded'),
         }
+        
+        # Add numeric fields, converting to Decimal for DynamoDB to avoid float inaccuracies
+        for key in ['numClips', 'videoLength', 'clipDuration']:
+            value = body.get(key)
+            if value is not None:
+                try:
+                    # Use string representation to avoid float precision issues with Decimal
+                    initial_item[key] = Decimal(str(value))
+                except Exception as e:
+                    print(f"Warning: Could not convert '{key}' with value '{value}' to Decimal. Skipping. Error: {e}")
+
         requests_table.put_item(Item=initial_item)
         print(f"Created montage request {request_id}")
 
@@ -1254,5 +1274,5 @@ def lambda_handler(event, context):
             },
             'body': json.dumps({
                 'message': f'Error creating video compilation: {str(e)}'
-            })
+            }, cls=DecimalEncoder)
         }
