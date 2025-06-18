@@ -611,27 +611,14 @@ def get_video_info(video_path):
 
     print(f"Initial dimensions: width={width}, height={height}. Final determined rotation: {rotation}")
 
-    # Store original dimensions before swap
-    original_width, original_height = width, height
-
-    # Swap width and height IF rotation requires it
-    if rotation in [90, 270]:
-        print(f"Applying rotation {rotation}: Swapping width and height.")
-        display_width, display_height = height, width
-    else:
-        display_width, display_height = width, height
-
-
     video_info = {
-        'width': display_width, # Represents displayed width
-        'height': display_height, # Represents displayed height
+        'width': width,
+        'height': height,
         'duration': duration,
-        'is_portrait': display_height > display_width, # Calculated based on displayed dimensions
-        'rotation': rotation, # Store the detected rotation
-        'original_width': original_width, # Store original for reference if needed
-        'original_height': original_height, # Store original for reference if needed
+        'rotation': rotation
     }
-    print(f"Final video info (adjusted for rotation): {video_info}")
+
+    print(f"Final video info: {video_info}")
     return video_info
 
 # Extract a random clip from a video
@@ -661,6 +648,7 @@ def extract_random_clip(video_path, output_path, clip_duration):
     cmd = [
         'ffmpeg',
         '-y',
+        '-noautorotate',
         '-ss', str(start_time),
         '-i', video_path,
         '-t', str(duration),
@@ -698,7 +686,7 @@ def extract_random_clip(video_path, output_path, clip_duration):
         'width': video_info['width'],
         'height': video_info['height'],
         'duration': duration,
-        'is_portrait': video_info['is_portrait']
+        'is_portrait': video_info['height'] > video_info['width']
     }
     print(f"Extracted clip info: {clip_info}")
     return clip_info
@@ -706,116 +694,79 @@ def extract_random_clip(video_path, output_path, clip_duration):
 # Resize video to match target resolution
 def resize_video(input_path, output_path, target_resolution):
     """
-    Resize the video to match the target resolution.
-    - Portrait inputs are scaled to fill the target height and cropped if needed.
-    - Landscape/Square inputs are scaled to fit within the target and padded.
+    Resize the video to match the target resolution using a universal filter.
+    - Handles rotation by applying a transpose filter.
+    - Scales video to fill the target dimensions and then center-crops.
     """
     print(f"Resizing video: {input_path} to resolution {target_resolution}")
     target_width, target_height = target_resolution
-    
-    # Get video info
+
+    # Get video info for rotation metadata
     video_info = get_video_info(input_path)
     if not video_info:
         print(f"Error: Could not get video information for {input_path}")
         return None
 
-    # Ensure width and height are not zero
-    if video_info['width'] == 0 or video_info['height'] == 0:
-        print(f"Error: Invalid video dimensions for {input_path}: width={video_info['width']}, height={video_info['height']}")
-        return None
+    rotation = video_info.get('rotation', 0)
 
     # Define ffmpeg base command options
     ffmpeg_opts = [
-        'ffmpeg', '-y', '-v', 'error', '-i', input_path,
+        'ffmpeg', '-y', '-noautorotate', '-v', 'error', '-i', input_path,
         '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p',
         '-crf', '23', '-r', '30', '-c:a', 'aac', '-strict', 'experimental'
     ]
-    
-    filter_complex = ""
 
-    if video_info['is_portrait']:
-        print(f"Input video {input_path} is portrait.")
-        # Check if it already matches the target resolution
-        if video_info['width'] == target_width and video_info['height'] == target_height:
-            print(f"Skipping resize for {input_path} as it already matches target resolution.")
-            try:
-                if os.path.abspath(input_path) != os.path.abspath(output_path):
-                    shutil.copy(input_path, output_path)
-                    print(f"Copied {input_path} to {output_path}")
-                else:
-                    print(f"Input and output paths are the same ({output_path}), no copy needed.")
-                
-                if os.path.exists(output_path):
-                    return output_path
-                else:
-                    print(f"Error: Output file {output_path} does not exist after copy/skip.")
-                    return None
-            except Exception as e:
-                print(f"Error copying or accessing file {input_path} to {output_path}: {e}")
-                return None
-        else:
-            # Portrait input, different dimensions: Scale to fill height, crop width
-            print(f"Scaling portrait video {input_path} to fill target height and cropping width.")
-            filter_complex = f'[0:v]scale=-1:{target_height},crop={target_width}:{target_height}[outv]'
-            cmd = ffmpeg_opts + ['-vf', filter_complex.replace('[0:v]', '').replace('[outv]', ''), output_path]
-            # Alternate filter using scale and crop directly in -vf
-            # filter_vf = f'scale=-1:{target_height},crop={target_width}:{target_height}'
-            # cmd = ffmpeg_opts + ['-vf', filter_vf, output_path]
+    # Build the universal filter chain
+    filter_chain = []
 
+    # 1. Handle rotation: Add transpose filter if needed.
+    if rotation == 90:
+        filter_chain.append("transpose=1")  # 90 degrees clockwise
+    elif rotation == 180:
+        filter_chain.append("transpose=2,transpose=2")
+    elif rotation == 270:
+        filter_chain.append("transpose=2")  # 90 degrees counter-clockwise
 
-    else: # Landscape or Square input
-        print(f"Input video {input_path} is landscape or square. Scaling and padding.")
-        # Scale to fit within target dimensions and pad (existing logic)
-        width_ratio = target_width / video_info['width']
-        height_ratio = target_height / video_info['height']
-        scale_factor = min(width_ratio, height_ratio)
-        new_width = max(int(video_info['width'] * scale_factor), 2)
-        new_height = max(int(video_info['height'] * scale_factor), 2)
-        x_offset = (target_width - new_width) // 2
-        y_offset = (target_height - new_height) // 2
-        
-        print(f"Resize parameters: new_width={new_width}, new_height={new_height}, x_offset={x_offset}, y_offset={y_offset}")
-        filter_complex = f"[0:v]scale={new_width}:{new_height},pad={target_width}:{target_height}:{x_offset}:{y_offset}:black[outv]"
-        cmd = ffmpeg_opts + ['-vf', filter_complex.replace('[0:v]', '').replace('[outv]', ''), output_path]
+    # 2. Add universal scale-and-crop filter.
+    # This scales the video to cover the target area, then crops the excess.
+    scale_crop_filter = f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase,crop={target_width}:{target_height}"
+    filter_chain.append(scale_crop_filter)
 
+    # 3. Construct and execute the ffmpeg command.
+    filter_complex = ",".join(filter_chain)
+    cmd = ffmpeg_opts + ['-vf', filter_complex, output_path]
 
-    # Execute ffmpeg command if filter_complex was set (i.e., not skipped)
-    if filter_complex:
-        print(f"Executing FFmpeg command: {' '.join(cmd)}")
-        try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
-            
-            if result.returncode != 0 or not os.path.exists(output_path):
-                stderr = result.stderr.decode('utf-8')
-                stdout = result.stdout.decode('utf-8')
-                print(f"Error during video processing: {stderr}")
-                # print(f"Command output: {stdout}") # Can be verbose
-                print(f"Return code: {result.returncode}")
-                print(f"Command: {' '.join(cmd)}")
-                return None
-        except subprocess.TimeoutExpired:
-            print(f"Timeout expired during video processing for {input_path}")
+    print(f"Executing FFmpeg command: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=300)
+
+        if result.returncode != 0 or not os.path.exists(output_path):
+            stderr = result.stderr.decode('utf-8')
+            print(f"Error during video processing: {stderr}")
+            print(f"Return code: {result.returncode}")
+            print(f"Command: {' '.join(cmd)}")
             return None
-        except Exception as e:
-             print(f"An unexpected error occurred running ffmpeg: {e}")
-             print(f"Command: {' '.join(cmd)}")
-             return None
+    except subprocess.TimeoutExpired:
+        print(f"Timeout expired during video processing for {input_path}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred running ffmpeg: {e}")
+        print(f"Command: {' '.join(cmd)}")
+        return None
 
-
-    # Verify the output file is valid after processing or skipping (if file exists)
+    # Verify the output file is valid after processing
     if os.path.exists(output_path):
         verify_cmd = ['ffprobe', '-v', 'error', output_path]
         verify_result = subprocess.run(verify_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
+
         if verify_result.returncode != 0:
             stderr = verify_result.stderr.decode('utf-8')
             print(f"Output file validation failed for {output_path}: {stderr}")
             return None
         else:
-             print(f"Successfully processed/copied video to {output_path}")
-             return output_path # Return path if valid
+            print(f"Successfully processed video to {output_path}")
+            return output_path
     else:
-        # This case should ideally not be reached if logic is correct
         print(f"Error: Output file {output_path} not found after processing.")
         return None
 
@@ -1138,6 +1089,9 @@ def create_video_compilation(event, context):
         # Concatenate clips without transitions
         combined_video_path = os.path.join(temp_dir, "combined.mp4")
         combined_video = concatenate_videos(resized_clips, combined_video_path)
+        
+        if not combined_video:
+            raise ValueError("Video concatenation failed, no output file produced.")
         
         # Add music if included
         if is_music_included and music_folder:
